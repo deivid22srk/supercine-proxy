@@ -1,16 +1,8 @@
 package imdb
 
-// PopularTitles is a curated list of ~120 popular IMDB IDs that we show on
-// the streaming UI home screen. We hardcode this because (a) the IMDB
-// suggestion endpoint requires a search query — there's no "list popular"
-// call without an API key, and (b) it gives the UI a deterministic, fast
-// home page experience.
-//
-// The list mixes classic and modern titles across movies and TV shows.
-// Each entry is the IMDB ID; the title, year, poster, and type are all
-// resolved live via the Supercine /embed-api/ endpoint or the IMDB
-// suggestion endpoint, so this list stays accurate even as posters change.
-var PopularTitles = []string{
+// popularMovies is a curated list of ~80 popular movie IMDB IDs shown
+// in the "Filmes populares" row of the streaming UI home screen.
+var popularMovies = []string{
 	// ===== Top classics =====
 	"tt0111161", // Um Sonho de Liberdade
 	"tt0468569", // Batman: O Cavaleiro das Trevas
@@ -74,10 +66,26 @@ var PopularTitles = []string{
 	"tt0365685", // Carandiru
 	"tt0118865", // Central do Brasil
 
-	// ===== Popular TV series =====
+	// ===== More blockbusters =====
+	"tt15398776", // Oppenheimer
+	"tt9362722", // Spider-Man: Através do Verso
+	"tt10872600", // Spider-Man: No Way Home
+	"tt9114286", // Black Panther: Wakanda Forever
+	"tt1745960", // Top Gun: Maverick
+	"tt6710474", // Avatar: O Caminho da Água
+	"tt6791350", // Guardiões da Galáxia Vol. 3
+	"tt1517268", // Barbie
+	"tt7286456", // Joker
+}
+
+// popularTV is a curated list of ~40 popular TV series IMDB IDs shown
+// in the "Séries populares" row. These are distinct from the movies so
+// the two rows don't show the same items.
+var popularTV = []string{
 	"tt0903747", // Breaking Bad
 	"tt4574334", // Stranger Things
 	"tt2861424", // Rick and Morty
+	"tt0944947", // Game of Thrones
 	"tt0141842", // Os Sopranos
 	"tt1475582", // Sherlock
 	"tt5491994", // Planeta Terra II
@@ -93,31 +101,94 @@ var PopularTitles = []string{
 	"tt2356777", // True Detective
 	"tt6468322", // La Casa de Papel
 	"tt1520211", // The Walking Dead
-
-	// ===== Anime =====
-	"tt0990411", // Death Note
-	"tt4786286", // One Punch Man
-	"tt4158110", // Kimetsu no Yaiba
-	"tt1905196", // Shingeki no Kyojin
-
-	// ===== More blockbusters =====
-	"tt15398776", // Oppenheimer
-	"tt9362722", // Spider-Man: Através do Verso
-	"tt10872600", // Spider-Man: No Way Home
-	"tt9114286", // Black Panther: Wakanda Forever
-	"tt1745960", // Top Gun: Maverick
-	"tt6710474", // Avatar: O Caminho da Água
-	"tt6791350", // Guardiões da Galáxia Vol. 3
-	"tt1517268", // Barbie
-	"tt7286456", // Joker
+	"tt0944947", // Game of Thrones (will be deduped)
+	"tt5491994", // Planeta Terra II (will be deduped)
+	"tt0386676", // The Office (US)
+	"tt0285331", // 24 Horas
+	"tt0401083", // Alista
+	"tt0098904", // Seinfeld (will be deduped)
+	"tt0773262", // Dexter
+	"tt1442437", // Modern Family
+	"tt0795176", // Um Maluco no Pedaço
+	"tt0096697", // Os Simpsons (will be deduped)
+	"tt1475582", // Sherlock (will be deduped)
+	"tt0387128", // The Big Bang Theory
+	"tt1439629", // Community
+	"tt0898266", // The IT Crowd
+	"tt5311514", // Atlantis
+	"tt4276898", // Dark
+	"tt6468322", // La Casa de Papel (will be deduped)
+	"tt11192306", // Merlí
+	"tt1865718", // House of Cards (US)
+	"tt1837492", // Como Eu Conheci Sua Mãe
+	"tt2741602", // Marco Polo
+	"tt2098220", // The Newsroom
+	"tt4188926", // Line of Duty
 }
 
-// DedupPopular returns the popular list with duplicate IMDB IDs removed,
+// classicMovies is a curated list of classic films (pre-2005) shown in
+// the "Clássicos atemporais" row. These overlap with popularMovies
+// intentionally — but we filter for old year at render time so the row
+// only shows classics, not recent ones.
+var classicMovies = []string{
+	"tt0111161", // Um Sonho de Liberdade (1994)
+	"tt0468569", // Batman: O Cavaleiro das Trevas (2008) — borderline
+	"tt0133093", // Matrix (1999)
+	"tt0137523", // Clube da Luta (1999)
+	"tt0109830", // Forrest Gump (1994)
+	"tt0114369", // Seven (1995)
+	"tt0167260", // Senhor dos Anéis: Retorno do Rei (2003)
+	"tt0110912", // Pulp Fiction (1994)
+	"tt0120737", // Senhor dos Anéis: Sociedade do Anel (2001)
+	"tt0068646", // O Poderoso Chefão (1972)
+	"tt0102926", // O Silêncio dos Inocentes (1991)
+	"tt0118799", // A Vida é Bela (1997)
+	"tt0167261", // Senhor dos Anéis: As Duas Torres (2002)
+	"tt0071562", // O Poderoso Chefão II (1974)
+	"tt0130827", // A Lista de Schindler (1993)
+	"tt0114814", // Os Suspeitos (1995)
+	"tt0114709", // Toy Story (1995)
+	"tt0118865", // Central do Brasil (1998)
+	"tt0080684", // Star Wars: Império Contra-Ataca (1980)
+	"tt0076759", // Star Wars: Uma Nova Esperança (1977)
+	"tt0121765", // Star Wars: A Ameaça Fantasma (1999)
+	"tt0121766", // Star Wars: Ataque dos Clones (2002)
+	"tt0101414", // A Pequena Sereia (1989)
+	"tt0333237", // Cidade de Deus (2002)
+	"tt0861732", // Tropa de Elite (2007) — borderline
+	"tt0365685", // Carandiru (2003)
+	"tt0110912", // Pulp Fiction (will dedup)
+	"tt0099685", // Bastidores (1990)
+	"tt0088763", // De Volta para o Futuro (1985)
+	"tt0086250", // Caça-Fantasmas (1984)
+	"tt0083658", // Blade Runner (1982)
+	"tt0084787", // Os Goonies (1985)
+	"tt0097576", // A Princesa Prometida (1987)
+	"tt0082971", // Indiana Jones e os Caçadores da Arca Perdida (1981)
+	"tt0099685", // Bastidores (dup)
+}
+
+// PopularMovies returns the deduplicated list of popular movie IMDB IDs.
+func PopularMovies() []string {
+	return dedup(popularMovies)
+}
+
+// PopularTV returns the deduplicated list of popular TV series IMDB IDs.
+func PopularTV() []string {
+	return dedup(popularTV)
+}
+
+// ClassicMovies returns the deduplicated list of classic movie IMDB IDs.
+func ClassicMovies() []string {
+	return dedup(classicMovies)
+}
+
+// dedup returns the input slice with duplicate IMDB IDs removed,
 // preserving the original order.
-func DedupPopular() []string {
+func dedup(ids []string) []string {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(PopularTitles))
-	for _, id := range PopularTitles {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
 		if seen[id] {
 			continue
 		}
@@ -125,4 +196,17 @@ func DedupPopular() []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// PopularTitles is kept for backwards compatibility — it returns the
+// full popular movies list (same as PopularMovies()).
+//
+// Deprecated: use PopularMovies() instead.
+var PopularTitles = popularMovies
+
+// DedupPopular is kept for backwards compatibility.
+//
+// Deprecated: use PopularMovies() instead.
+func DedupPopular() []string {
+	return PopularMovies()
 }

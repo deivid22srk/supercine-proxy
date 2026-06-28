@@ -21,6 +21,8 @@ import (
         "github.com/deivid22srk/supercine-proxy/internal/enricher"
         "github.com/deivid22srk/supercine-proxy/internal/extractors"
         "github.com/deivid22srk/supercine-proxy/internal/logger"
+        "github.com/deivid22srk/supercine-proxy/internal/provider"
+        "github.com/deivid22srk/supercine-proxy/internal/provider/supercine"
         "github.com/deivid22srk/supercine-proxy/internal/proxy"
         "github.com/deivid22srk/supercine-proxy/internal/streaming"
         "github.com/deivid22srk/supercine-proxy/internal/web"
@@ -51,13 +53,26 @@ func main() {
         registry := extractors.NewRegistry()
         proxyServer := proxy.New(cfg, cacheStore, logr)
         apiServer := api.New(cfg, logr, proxyServer, registry)
-        en := enricher.New(cfg.EmbedBase, cfg.UserAgent)
-        streamingHandler := streaming.New(en)
+
+        // Provider registry — currently only Supercine, but the architecture
+        // supports adding more providers (megahdfilmes, jellyfin, etc.) later
+        // without touching the UI layer.
+        providerReg := provider.NewRegistry()
+        sp := supercine.New(supercine.ProviderConfig{
+                EmbedBase:   cfg.EmbedBase,
+                UserAgent:   cfg.UserAgent,
+                HTTPTimeout: cfg.RequestTimeout,
+        }, registry)
+        providerReg.Register(sp)
+        log.Printf("[boot] registered provider: %s (priority=%d)", sp.Name(), sp.Priority())
+
+        en := enricher.New(providerReg)
+        streamingHandler := streaming.New(en, providerReg)
 
         // Top-level router.
         mux := http.NewServeMux()
 
-        // /v1/catalog/* — streaming UI catalog endpoints (popular, search, resolve).
+        // /v1/catalog/* and /v1/providers and /v1/resolve — streaming UI endpoints.
         streamingHandler.Register(mux)
 
         // /v1/* — proxy REST API.

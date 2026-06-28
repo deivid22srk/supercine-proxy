@@ -17,9 +17,9 @@
       </a>
     </div>
     <div class="nav-links">
-      <a href="/" class="nav-link active" data-page="home">Início</a>
-      <a href="/#movies" class="nav-link" data-page="movies">Filmes</a>
-      <a href="/#tv" class="nav-link" data-page="tv">Séries</a>
+      <a href="/" class="nav-link active">Início</a>
+      <a href="/#movies" class="nav-link">Filmes</a>
+      <a href="/#tv" class="nav-link">Séries</a>
       <a href="/admin" class="nav-link admin-link">Admin</a>
     </div>
     <div class="nav-search">
@@ -33,6 +33,14 @@
     </div>
   </nav>
 
+  <!-- ================= PROVIDER STATUS BAR ================= -->
+  <div class="provider-bar">
+    <div class="provider-status" id="providerStatus">
+      <span class="provider-dot loading"></span>
+      <span>Carregando provedores…</span>
+    </div>
+  </div>
+
   <!-- ================= HERO BANNER ================= -->
   <section class="hero" id="hero">
     <div class="hero-backdrop" id="heroBackdrop"></div>
@@ -44,11 +52,11 @@
       <p class="hero-desc" id="heroDesc"></p>
       <div class="hero-actions">
         <button class="btn-play" id="heroPlayBtn">
-          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
           Assistir
         </button>
         <button class="btn-info" id="heroInfoBtn">
-          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
           Mais informações
         </button>
       </div>
@@ -65,17 +73,17 @@
 
     <!-- Home content (visible by default) -->
     <div id="homeContent">
-      <section class="content-row">
+      <section class="content-row" id="movies">
         <h2 class="row-title">🔥 Filmes populares</h2>
         <div class="card-row" id="rowMovies"></div>
       </section>
 
-      <section class="content-row">
+      <section class="content-row" id="tv">
         <h2 class="row-title">📺 Séries populares</h2>
         <div class="card-row" id="rowTV"></div>
       </section>
 
-      <section class="content-row">
+      <section class="content-row" id="rowClassicsContainer">
         <h2 class="row-title">🏆 Clássicos atemporais</h2>
         <div class="card-row" id="rowClassics"></div>
       </section>
@@ -85,8 +93,8 @@
   <!-- ================= MODAL: DETALHES ================= -->
   <div class="modal" id="detailModal" hidden>
     <div class="modal-backdrop" id="modalBackdrop"></div>
-    <div class="modal-card">
-      <button class="modal-close" id="modalClose">×</button>
+    <div class="modal-card" id="modalCard">
+      <button class="modal-close" id="modalClose" aria-label="Fechar">×</button>
       <div class="modal-backdrop-img" id="modalBackdropImg"></div>
       <div class="modal-gradient"></div>
       <div class="modal-body">
@@ -95,7 +103,7 @@
         <div class="modal-actions">
           <button class="btn-play" id="modalPlayBtn">
             <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
-            Assistir agora
+            <span id="modalPlayBtnLabel">Assistir agora</span>
           </button>
         </div>
         <p class="modal-cast" id="modalCast"></p>
@@ -105,8 +113,8 @@
 
   <!-- ================= MODAL: PLAYER ================= -->
   <div class="player-modal" id="playerModal" hidden>
-    <div class="player-container">
-      <button class="player-close" id="playerClose">×</button>
+    <div class="player-container" id="playerContainer">
+      <button class="player-close" id="playerClose" aria-label="Fechar">×</button>
       <div class="player-header">
         <h2 class="player-title" id="playerTitle"></h2>
         <div class="player-meta" id="playerMeta"></div>
@@ -116,8 +124,10 @@
         <div class="player-loading" id="playerLoading">
           <div class="spinner"></div>
           <p>Resolvendo link de streaming…</p>
+          <p class="player-loading-detail">Conectando ao provedor…</p>
         </div>
         <div class="player-error" id="playerError" hidden>
+          <svg viewBox="0 0 24 24" width="48" height="48" style="color: var(--bad)"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
           <p>Não foi possível reproduzir este título.</p>
           <p class="player-error-detail" id="playerErrorDetail"></p>
           <button class="btn-info" id="playerRetryBtn">Tentar outro servidor</button>
@@ -132,7 +142,7 @@
 
   <footer class="footer">
     <p>Supercine Proxy · Interface de streaming · Feito com Go + hls.js</p>
-    <p class="footer-small">Busca via IMDB · Resolução via Supercine embed · <a href="/admin">Painel admin</a></p>
+    <p class="footer-small">Busca via IMDB · Resolução via provedor Supercine · <a href="/admin">Painel admin</a></p>
   </footer>
 
   <!-- hls.js for m3u8 streams -->
