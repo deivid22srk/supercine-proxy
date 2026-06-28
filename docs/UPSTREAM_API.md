@@ -304,9 +304,16 @@ Fora do `/wp-json/`, mas essencial para o fluxo. Retorna uma página HTML custom
 curl 'https://supercine-tv.net/embed-api/?imdb=tt2250912&type=movies'
 ```
 
-**HTML resultante (estrutura):**
+**HTML resultante (estrutura completa):**
 
 ```html
+<!-- ⭐ Título traduzido em PT-BR -->
+<ititle>Homem-Aranha: De Volta ao Lar</ititle>
+
+<!-- ⭐ Backdrop (imagem de fundo) vindo do TMDB -->
+<backdrop style="background-image: url('https://image.tmdb.org/t/p/original/fn4n6uOYcB6Uh89nbNPoU2w80RV.jpg');"></backdrop>
+
+<!-- Lista de servidores disponíveis -->
 <playeroptions class="visible">
   <playeroptions-audios>
     <audio-selector class="active" data-lang="1"></audio-selector>
@@ -327,6 +334,14 @@ curl 'https://supercine-tv.net/embed-api/?imdb=tt2250912&type=movies'
   </playeroptions-servers>
 </playeroptions>
 ```
+
+> 💡 **Descoberta importante**: o Supercine usa o TMDB internamente para buscar backdrops. Isso significa que **para qualquer IMDB ID válido**, este endpoint retorna:
+>
+> - Título traduzido em PT-BR (via `<ititle>`)
+> - URL do backdrop full-resolution do TMDB (via `<backdrop style="background-image:...">`)
+> - Lista de servidores de streaming disponíveis
+>
+> Isso é o que permite à UI de streaming deste proxy mostrar um catálogo visualmente rico **sem precisar de nenhuma API key do TMDB**.
 
 ### `GET /embed-api/?action=embed&url=<data-server>`
 

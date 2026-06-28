@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supercine — Filmes e Séries Online</title>
+  <link rel="stylesheet" href="/static/streaming.css" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='20'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- ================= NAVBAR ================= -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <a href="/" class="brand-link">
+        <span class="brand-logo">🎬</span>
+        <span class="brand-name">SUPER<span class="brand-accent">CINE</span></span>
+      </a>
+    </div>
+    <div class="nav-links">
+      <a href="/" class="nav-link active" data-page="home">Início</a>
+      <a href="/#movies" class="nav-link" data-page="movies">Filmes</a>
+      <a href="/#tv" class="nav-link" data-page="tv">Séries</a>
+      <a href="/admin" class="nav-link admin-link">Admin</a>
+    </div>
+    <div class="nav-search">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" class="search-icon" width="20" height="20">
+          <path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/>
+        </svg>
+        <input type="text" id="searchInput" placeholder="Buscar filmes, séries..." autocomplete="off" />
+        <button class="search-clear" id="searchClear" hidden>×</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ================= HERO BANNER ================= -->
+  <section class="hero" id="hero">
+    <div class="hero-backdrop" id="heroBackdrop"></div>
+    <div class="hero-gradient"></div>
+    <div class="hero-content">
+      <div class="hero-badge" id="heroBadge">⚡ Em destaque</div>
+      <h1 class="hero-title" id="heroTitle">Carregando…</h1>
+      <p class="hero-meta" id="heroMeta"></p>
+      <p class="hero-desc" id="heroDesc"></p>
+      <div class="hero-actions">
+        <button class="btn-play" id="heroPlayBtn">
+          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+          Assistir
+        </button>
+        <button class="btn-info" id="heroInfoBtn">
+          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
+          Mais informações
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONTENT ROWS ================= -->
+  <main class="content" id="content">
+    <!-- Search results (hidden by default) -->
+    <section class="search-results" id="searchResults" hidden>
+      <h2 class="row-title">Resultados para "<span id="searchQuery"></span>"</h2>
+      <div class="card-grid" id="searchGrid"></div>
+    </section>
+
+    <!-- Home content (visible by default) -->
+    <div id="homeContent">
+      <section class="content-row">
+        <h2 class="row-title">🔥 Filmes populares</h2>
+        <div class="card-row" id="rowMovies"></div>
+      </section>
+
+      <section class="content-row">
+        <h2 class="row-title">📺 Séries populares</h2>
+        <div class="card-row" id="rowTV"></div>
+      </section>
+
+      <section class="content-row">
+        <h2 class="row-title">🏆 Clássicos atemporais</h2>
+        <div class="card-row" id="rowClassics"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ================= MODAL: DETALHES ================= -->
+  <div class="modal" id="detailModal" hidden>
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-card">
+      <button class="modal-close" id="modalClose">×</button>
+      <div class="modal-backdrop-img" id="modalBackdropImg"></div>
+      <div class="modal-gradient"></div>
+      <div class="modal-body">
+        <h2 class="modal-title" id="modalTitle"></h2>
+        <p class="modal-meta" id="modalMeta"></p>
+        <div class="modal-actions">
+          <button class="btn-play" id="modalPlayBtn">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            Assistir agora
+          </button>
+        </div>
+        <p class="modal-cast" id="modalCast"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: PLAYER ================= -->
+  <div class="player-modal" id="playerModal" hidden>
+    <div class="player-container">
+      <button class="player-close" id="playerClose">×</button>
+      <div class="player-header">
+        <h2 class="player-title" id="playerTitle"></h2>
+        <div class="player-meta" id="playerMeta"></div>
+      </div>
+      <div class="player-wrap">
+        <video id="videoPlayer" controls playsinline></video>
+        <div class="player-loading" id="playerLoading">
+          <div class="spinner"></div>
+          <p>Resolvendo link de streaming…</p>
+        </div>
+        <div class="player-error" id="playerError" hidden>
+          <p>Não foi possível reproduzir este título.</p>
+          <p class="player-error-detail" id="playerErrorDetail"></p>
+          <button class="btn-info" id="playerRetryBtn">Tentar outro servidor</button>
+        </div>
+      </div>
+      <div class="server-list" id="serverList">
+        <p class="server-list-title">Servidores disponíveis:</p>
+        <div class="server-buttons" id="serverButtons"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>Supercine Proxy · Interface de streaming · Feito com Go + hls.js</p>
+    <p class="footer-small">Busca via IMDB · Resolução via Supercine embed · <a href="/admin">Painel admin</a></p>
+  </footer>
+
+  <!-- hls.js for m3u8 streams -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script src="/static/streaming.js"></script>
+</body>
+</html>

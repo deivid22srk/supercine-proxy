@@ -1,13 +1,13 @@
 # 🎬 Supercine Proxy
 
-Um **proxy reverso em Go** para a API do app Android **Supercine.tv** (package `tv.supercine`), com **interface web embutida** (dashboard), **cache**, **logging estruturado**, e **8 extractors de hosters** (DoodStream, StreamWish, VidHide, FileMoon, FileLions, MixDrop, StreamTape, Voe) portados diretamente do código Java/Kotlin do APK.
+Um **proxy reverso em Go** para a API do app Android **Supercine.tv** (package `tv.supercine`), com **interface web estilo Netflix** para pesquisar e assistir filmes/séries direto no navegador, mais um **dashboard admin** com cache, logging estruturado, e **8 extractors de hosters** (DoodStream, StreamWish, VidHide, FileMoon, FileLions, MixDrop, StreamTape, Voe) portados do código Java/Kotlin do APK.
 
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Status](https://img.shields.io/badge/status-working-green)]()
 
 > 🇧🇷 Projeto feito a partir da engenharia reversa do APK `Supercine.tv_1.0.0_antisplit.apk`.
-> 🇺🇸 Reverse-engineered Go proxy for the Supercine.tv Android APK with a web dashboard.
+> 🇺🇸 Reverse-engineered Go proxy for the Supercine.tv Android APK with a Netflix-style web UI.
 
 ---
 
@@ -22,8 +22,9 @@ cd supercine-proxy
 go run ./cmd/server
 
 # 3. Acessar
-# Dashboard:  http://localhost:8080
-# API:        http://localhost:8080/v1/
+# UI Streaming: http://localhost:8080/         (pesquise e assista!)
+# Admin:        http://localhost:8080/admin    (logs, stats, API explorer)
+# API:          http://localhost:8080/v1/
 ```
 
 Build estático:
@@ -52,13 +53,27 @@ Variáveis de ambiente:
 
 ## 🧩 O que isso faz?
 
-O proxy faz três coisas:
+O proxy faz quatro coisas:
 
-1. **Proxy transparente** do `https://supercine-tv.net/wp-json/*` em `http://localhost:8080/wp-json/*`. Você pode apontar o APK diretamente para o proxy sem mudar uma linha.
+1. **UI de Streaming** em `/` (estilo Netflix) — pesquise por qualquer filme/série, veja capas, backdrops e detalhes, e assista direto no navegador com player de vídeo (hls.js para m3u8, mp4 nativo). A busca usa a API pública do IMDB (sem chave), os detalhes e backdrops vêm do endpoint `/embed-api/` do próprio Supercine, e o player usa os 8 extractors para resolver o link direto.
 
-2. **Camada de API REST** em `/v1/*` com caching, logging, estatísticas, e wrappers de conveniência (e.g. `/v1/extract` resolve um IMDB ID para URL direta mp4/m3u8 em um único call).
+2. **Proxy transparente** do `https://supercine-tv.net/wp-json/*` em `http://localhost:8080/wp-json/*`. Você pode apontar o APK diretamente para o proxy sem mudar uma linha.
 
-3. **Dashboard web** embutido em `/` com visão geral (stats, gráficos), tabela de logs em tempo real, API Explorer, ferramenta de extraction, e docs integradas.
+3. **Camada de API REST** em `/v1/*` com caching, logging, estatísticas, e wrappers de conveniência (e.g. `/v1/extract` resolve um IMDB ID para URL direta mp4/m3u8 em um único call). Endpoints `/v1/catalog/*` alimentam a UI de streaming.
+
+4. **Dashboard admin** em `/admin` com visão geral (stats, gráficos), tabela de logs em tempo real, API Explorer, ferramenta de extraction, e docs integradas.
+
+---
+
+## 🎯 Descoberta chave: o Supercine retorna imagens!
+
+Investigando o endpoint `/embed-api/?imdb=...&type=movies` descobrimos que ele retorna uma página HTML customizada contendo:
+
+- `<ititle>` com o **título traduzido em PT-BR** (ex: `tt2250912` → "Homem-Aranha: De Volta ao Lar")
+- `<backdrop style="background-image: url('https://image.tmdb.org/...')">` com o **backdrop do TMDB**
+- Vários `<server-selector data-server="...">` com os hosters disponíveis
+
+Isso significa que **para qualquer IMDB ID válido**, o Supercine resolve metadados + backdrop + servidores. Combinado com a API pública de sugestões do IMDB (`v3.sg.media-imdb.com/suggestion/...`) que retorna o título original, ano, poster e elenco, temos um catálogo completo **sem precisar de nenhuma API key**.
 
 ---
 
@@ -77,12 +92,48 @@ O proxy faz três coisas:
 | `POST` | `/v1/extract` | Mesmo do GET, body JSON |
 | `GET` | `/v1/extractors` | Lista os 8 hosters suportados |
 | `GET` | `/v1/routes` | Descoberta automática das 158 rotas upstream |
+| `GET` | `/v1/catalog/popular?type=movies&limit=80` | Lista de ~80 populares com metadados completos (sem API key) |
+| `GET` | `/v1/catalog/search?q=...&limit=12` | Busca por título (via IMDB suggestion API) |
+| `GET` | `/v1/catalog/resolve?imdb=tt...&type=movies` | Resolve um IMDB específico |
+| `GET` | `/v1/catalog/movie/<imdb>` | Alias path-based para resolve |
 | `*` | `/wp-json/*` | Proxy transparente para o upstream |
 | `GET` | `/embed-api/?...` | Proxy transparente para o embed |
 
 ---
 
 ## 🎯 Exemplos
+
+### Buscar e resolver metadados (sem API key!)
+
+```bash
+curl 'http://localhost:8080/v1/catalog/search?q=homem+aranha&limit=3' | jq '.items[] | {imdb, title_ptbr, title_orig, year, available, server_count}'
+```
+
+```json
+{
+  "imdb": "tt2250912",
+  "title_ptbr": "Homem-Aranha: De Volta ao Lar",
+  "title_orig": "Spider-Man: Homecoming",
+  "year": 2017,
+  "available": true,
+  "server_count": 4
+}
+```
+
+### Listar filmes populares
+
+```bash
+curl 'http://localhost:8080/v1/catalog/popular?type=movies&limit=10' | jq '.items[] | "\(.title_ptbr) (\(.year)) [\(.server_count) servidores]"'
+```
+
+```
+"Um Sonho de Liberdade (1994) [3 servidores]"
+"Batman: O Cavaleiro das Trevas (2008) [5 servidores]"
+"A Origem (2010) [3 servidores]"
+"Matrix (1999) [4 servidores]"
+"Interestelar (2014) [7 servidores]"
+...
+```
 
 ### Resolver um filme para URL direta
 
@@ -145,6 +196,59 @@ No APK original, a URL base é `https://supercine-tv.net/wp-json/api/`. Para usa
 
 ---
 
+## 🎬 Interface de Streaming (`/`)
+
+A página inicial do proxy é uma **UI estilo Netflix** onde você pesquisa e assiste filmes/séries direto no navegador.
+
+### Features
+
+- **Home com hero banner** mostrando um título em destaque (com backdrop full-screen do TMDB)
+- **3 rows de catálogo**: Filmes populares, Séries populares, Clássicos
+- **Busca em tempo real** com debounce de 350ms — busca na API de sugestões do IMDB
+- **Modal de detalhes** com backdrop, título, ano, tipo e elenco
+- **Player de vídeo embutido** com:
+  - Suporte a **mp4 direto** (nativo do navegador)
+  - Suporte a **HLS/m3u8** via [hls.js](https://github.com/video-dev/hls.js/) (com fallback nativo para Safari)
+  - Lista de servidores disponíveis para escolha manual
+  - Botão "tentar outro servidor" quando um falha
+- **Responsive**: funciona em desktop, tablet e mobile
+
+### Como funciona o fluxo
+
+```
+┌──────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Browser UI  │ -> │ /v1/catalog/*    │ -> │ IMDB Suggestions│
+│  (streaming) │    │ (Go enricher)    │    │ (sem API key)   │
+└──────────────┘    └────────┬─────────┘    └─────────────────┘
+                             │
+                             ▼
+                    ┌──────────────────┐
+                    │ /v1/embed        │ (Supercine /embed-api/)
+                    │ + /v1/extract    │ -> PT-BR title + backdrop
+                    └────────┬─────────┘    + server list -> hoster URL
+                             │              -> direct mp4/m3u8 URL
+                             ▼
+                    ┌──────────────────┐
+                    │ 8 hoster         │
+                    │  extractors      │
+                    │  (DoodStream,    │
+                    │   StreamWish,    │
+                    │   VidHide, etc)  │
+                    └──────────────────┘
+```
+
+### Configuração opcional
+
+A UI de streaming **não precisa de nenhuma API key**. Mas você pode ajustar:
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `EMBED_BASE` | `https://supercine-tv.net/embed-api/` | Base do endpoint de embed |
+
+Se quiser adicionar mais filmes à home, edite `internal/imdb/catalog.go` (lista `PopularTitles`).
+
+---
+
 ## 🏗️ Arquitetura
 
 ```
@@ -189,12 +293,14 @@ supercine-proxy/
 │   └── server/
 │       └── main.go              # entrypoint
 ├── internal/
-│   ├── api/                     # REST API em /v1
+│   ├── api/                     # REST API em /v1 (admin)
 │   │   └── api.go
 │   ├── cache/                   # cache TTL+LRU
 │   │   └── cache.go
 │   ├── config/                  # config via env vars
 │   │   └── config.go
+│   ├── enricher/                # combina IMDB + Supercine embed
+│   │   └── enricher.go          # para produzir MovieMeta completo
 │   ├── extractors/              # 8 extractors de hosters
 │   │   ├── registry.go          # dispatch por URL
 │   │   ├── doodstream.go
@@ -206,19 +312,27 @@ supercine-proxy/
 │   │   ├── streamtape.go
 │   │   ├── voe.go
 │   │   └── jsunpacker.go        # port do JSUnpacker.java
+│   ├── imdb/                    # client da API de sugestões IMDB
+│   │   ├── imdb.go              # (sem chave) + catálogo popular
+│   │   └── catalog.go           # ~80 IMDB IDs populares curados
 │   ├── logger/                  # ring buffer + stats
 │   │   └── logger.go
 │   ├── proxy/                   # HTTP reverse proxy
 │   │   └── proxy.go
+│   ├── streaming/               # endpoints /v1/catalog/* (UI streaming)
+│   │   └── streaming.go
 │   ├── types/                   # tipos compartilhados
 │   │   └── types.go
-│   └── web/                     # dashboard HTML/CSS/JS embutido
-│       ├── web.go
+│   └── web/                     # HTML/CSS/JS embutido (2 UIs)
+│       ├── web.go               # / -> streaming, /admin -> dashboard
 │       ├── templates/
-│       │   └── index.html
+│       │   ├── streaming.html   # UI estilo Netflix
+│       │   └── index.html       # dashboard admin
 │       └── static/
-│           ├── style.css
-│           └── app.js
+│           ├── streaming.css    # estilos da UI streaming
+│           ├── streaming.js     # lógica + hls.js integration
+│           ├── style.css        # estilos do admin
+│           └── app.js           # lógica do admin
 ├── examples/
 │   └── extract_url.go           # CLI para extrair URL de hoster
 ├── docs/
