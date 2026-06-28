@@ -324,11 +324,31 @@ func (p *SupercineProvider) resolveHosterURL(ctx context.Context, dataServer, re
 // request returns 403. We set Origin and Referer based on the hoster the
 // URL came from so the CDN accepts the verification request.
 //
-// On network errors we return true (be lenient) because the URL may still
-// be reachable from the user's network — we'd rather return a URL and
-// let the player retry than filter out a URL that the user could
-// actually play.
+// Some MixDrop CDN hosts are flaky and may return 403 intermittently even
+// with correct headers. We retry up to 2 times with a short backoff to
+// work around this. On persistent network errors we return true (be
+// lenient) because the URL may still be reachable from the user's
+// network — we'd rather return a URL and let the player retry than
+// filter out a URL that the user could actually play.
 func (p *SupercineProvider) verifyURL(ctx context.Context, videoURL string) bool {
+        for attempt := 0; attempt < 3; attempt++ {
+                ok := p.verifyURLOnce(ctx, videoURL)
+                if ok {
+                        return true
+                }
+                // Short backoff before retry. The CDN may have rate-limited us
+                // momentarily; a small wait often clears it.
+                select {
+                case <-ctx.Done():
+                        return true // context cancelled — be lenient
+                case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
+                }
+        }
+        return false
+}
+
+// verifyURLOnce performs a single verification attempt.
+func (p *SupercineProvider) verifyURLOnce(ctx context.Context, videoURL string) bool {
         req, err := http.NewRequestWithContext(ctx, http.MethodGet, videoURL, nil)
         if err != nil {
                 return false
