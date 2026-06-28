@@ -1,6 +1,11 @@
 /* ============ RESET & BASE ============ */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* CRITICAL: ensure the HTML `hidden` attribute always wins over our
+   display:flex / display:block rules on modals. Without this rule, any
+   element with display:flex in CSS would always show, ignoring `hidden`. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #0a0a0f;
   --bg-elev: #14141d;
