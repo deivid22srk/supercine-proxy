@@ -1876,6 +1876,12 @@ async function resolveWithFallback(imdb, type) {
   tocar a URL direta.
 - ✨ Adicionado `GET /v1/catalog/home` — 4 linhas de destaque (Lançamentos,
   Destaques, Recentes, Sugeridos) do Supercine, 12 itens cada.
+- ✨ **Adicionado provider Amenic Plus** (`internal/provider/amenic`),
+  analisado do `Amenic.Plus_1.7.3_antisplit.apk`. Provider fica
+  **desativado por padrão** porque `amenic-file.com` está atrás do
+  Cloudflare managed challenge (bloqueia IPs de datacenter). Ative com
+  `AMENIC_ENABLED=true`. Veja [`AMENIC_PROVIDER.md`](AMENIC_PROVIDER.md)
+  para detalhes.
 - 🔧 `/v1/resolve` agora tenta **todos** os servidores (antes eram 3) e os
   reordena por prioridade de hoster (StreamWish/FileMoon primeiro,
   DoodStream por último).

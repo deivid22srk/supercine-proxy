@@ -22,6 +22,7 @@ import (
         "github.com/deivid22srk/supercine-proxy/internal/extractors"
         "github.com/deivid22srk/supercine-proxy/internal/logger"
         "github.com/deivid22srk/supercine-proxy/internal/provider"
+        "github.com/deivid22srk/supercine-proxy/internal/provider/amenic"
         "github.com/deivid22srk/supercine-proxy/internal/provider/supercine"
         "github.com/deivid22srk/supercine-proxy/internal/proxy"
         "github.com/deivid22srk/supercine-proxy/internal/streaming"
@@ -66,6 +67,29 @@ func main() {
         }, registry)
         providerReg.Register(sp)
         log.Printf("[boot] registered provider: %s (priority=%d)", sp.Name(), sp.Priority())
+
+        // Amenic Plus provider — analyzed from the Amenic.Plus_1.7.3_antisplit.apk.
+        // amenic-file.com is behind Cloudflare's managed challenge, so this
+        // provider only works from residential IPs. It's registered with
+        // priority 200 (higher than Supercine's 100) so Supercine is tried
+        // first; Amenic is the fallback. When Cloudflare blocks the request,
+        // the provider returns ErrProviderDown and the registry moves on to
+        // the next provider (which, today, is Supercine — but Supercine is
+        // tried first so this only matters when Supercine is down).
+        if cfg.AmenicEnabled {
+                ap := amenic.New(amenic.ProviderConfig{
+                        BaseURL:    cfg.AmenicBase,
+                        ThumbBase:  cfg.AmenicThumbBase,
+                        AppVersion: cfg.AmenicAppVersion,
+                        DeviceID:   cfg.AmenicDeviceID,
+                        UserAgent:  cfg.UserAgent,
+                        HTTPTimeout: cfg.RequestTimeout,
+                }, registry)
+                providerReg.Register(ap)
+                log.Printf("[boot] registered provider: %s (priority=%d)", ap.Name(), ap.Priority())
+        } else {
+                log.Printf("[boot] provider amenic: disabled (set AMENIC_ENABLED=true to enable)")
+        }
 
         en := enricher.New(providerReg)
         streamingHandler := streaming.New(en, providerReg)

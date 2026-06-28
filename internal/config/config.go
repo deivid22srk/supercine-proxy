@@ -46,6 +46,26 @@ type Config struct {
 
         // TMDBBase is the TMDB REST root.
         TMDBBase string
+
+        // AmenicEnabled controls whether the Amenic Plus provider is
+        // registered. The provider is off by default because
+        // amenic-file.com is behind Cloudflare's managed challenge,
+        // which blocks datacenter IPs (like Render's). Enable only if
+        // the proxy runs from a residential IP.
+        AmenicEnabled bool
+
+        // AmenicBase is the Amenic file server root.
+        AmenicBase string
+
+        // AmenicThumbBase is the thumbnail/asset CDN root.
+        AmenicThumbBase string
+
+        // AmenicAppVersion is the version string sent in the `v` query
+        // parameter to amenic-file.com.
+        AmenicAppVersion string
+
+        // AmenicDeviceID is sent in the `r` query parameter.
+        AmenicDeviceID string
 }
 
 // Default returns a Config populated from env vars with sensible defaults.
@@ -63,16 +83,22 @@ func Default() *Config {
                 Verbose:         envBool("VERBOSE", false),
                 TMDBAPIKey:      envStr("TMDB_API_KEY", ""),
                 TMDBBase:        envStr("TMDB_BASE", "https://api.themoviedb.org/3"),
+                AmenicEnabled:   envBool("AMENIC_ENABLED", false),
+                AmenicBase:      envStr("AMENIC_BASE", "https://amenic-file.com"),
+                AmenicThumbBase: envStr("AMENIC_THUMB_BASE", "https://thumb.fvs.io/asset"),
+                AmenicAppVersion: envStr("AMENIC_APP_VERSION", "1.7.3"),
+                AmenicDeviceID:   envStr("AMENIC_DEVICE_ID", "supercine-proxy-amenic"),
         }
 }
 
 // String returns a human-readable summary for the startup banner.
 func (c *Config) String() string {
         return fmt.Sprintf(
-                "listen=%s upstream=%s embed=%s cache_ttl=%s cache_max=%d log_max=%d timeout=%s admin_token_set=%v verbose=%v tmdb_key_set=%v",
+                "listen=%s upstream=%s embed=%s cache_ttl=%s cache_max=%d log_max=%d timeout=%s admin_token_set=%v verbose=%v tmdb_key_set=%v amenic_enabled=%v",
                 c.ListenAddr, c.UpstreamBase, c.EmbedBase,
                 c.CacheTTL, c.CacheMaxEntries, c.LogMaxEntries,
                 c.RequestTimeout, c.AdminToken != "", c.Verbose, c.TMDBAPIKey != "",
+                c.AmenicEnabled,
         )
 }
 
