@@ -1,17 +1,17 @@
 package extractors
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"regexp"
-	"strings"
+        "context"
+        "crypto/rand"
+        "encoding/hex"
+        "fmt"
+        "io"
+        "net/http"
+        "net/url"
+        "regexp"
+        "strings"
 
-	"github.com/deivid22srk/supercine-proxy/internal/types"
+        "github.com/deivid22srk/supercine-proxy/internal/types"
 )
 
 // DoodStream extractor — ported from tv.supercine.supercine.sites.DoodStream.
@@ -21,6 +21,13 @@ import (
 //  2. Regex out the /pass_md5/... path.
 //  3. GET {base}/pass_md5/... with Referer to obtain a 10-char random salt.
 //  4. Final URL = md5_response + randomStr(10) + "?token=" + last URL segment.
+//
+// ⚠️ As of 2026, DoodStream serves a Cloudflare Turnstile CAPTCHA on the
+// embed page. The pass_md5 endpoint is only revealed after the CAPTCHA is
+// solved in a real browser, so this extractor will fail on most videos.
+// We detect the CAPTCHA page and return a clear error so the caller can
+// fall through to other hosters (StreamWish, FileMoon, MixDrop, etc.)
+// rather than reporting a generic "pass_md5 not found" message.
 type DoodStream struct{}
 
 func NewDoodStream() *DoodStream { return &DoodStream{} }
@@ -28,96 +35,107 @@ func NewDoodStream() *DoodStream { return &DoodStream{} }
 func (d *DoodStream) Name() string { return "doodstream" }
 
 func (d *DoodStream) Match(u string) bool {
-	return matchAny(u, `(?i).+(doodstream|dood|vidply|do7go)\.(com|watch|to|so|la|ws|sh|pm|re|li)/.+`)
+        return matchAny(u, `(?i).+(doodstream|dood|vidply|do7go)\.(com|watch|to|so|la|ws|sh|pm|re|li)/.+`)
 }
 
 var (
-	doodPassRe = regexp.MustCompile(`/pass_md5/[^']+`)
+        doodPassRe = regexp.MustCompile(`/pass_md5/[^']+`)
 )
 
 func (d *DoodStream) Extract(ctx context.Context, rawURL string) (*types.ExtractorResult, error) {
-	// Normalize: /d/ -> /e/
-	pageURL := strings.Replace(rawURL, "/d/", "/e/", 1)
+        // Normalize: /d/ -> /e/
+        pageURL := strings.Replace(rawURL, "/d/", "/e/", 1)
 
-	client := httpClient()
+        client := httpClient()
 
-	// Step 1: fetch the embed page.
-	req, err := newGet(ctx, pageURL, pageURL)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	bodyStr := string(body)
+        // Step 1: fetch the embed page.
+        req, err := newGet(ctx, pageURL, pageURL)
+        if err != nil {
+                return nil, err
+        }
+        resp, err := client.Do(req)
+        if err != nil {
+                return nil, err
+        }
+        defer resp.Body.Close()
+        body, err := io.ReadAll(resp.Body)
+        if err != nil {
+                return nil, err
+        }
+        bodyStr := string(body)
 
-	// Step 2: locate /pass_md5/...
-	match := doodPassRe.FindString(bodyStr)
-	if match == "" {
-		return nil, fmt.Errorf("pass_md5 não encontrado na página do DoodStream")
-	}
+        // Detect the Cloudflare Turnstile CAPTCHA page. DoodStream now
+        // requires the user to solve a CAPTCHA before the pass_md5 endpoint
+        // is revealed. Since we can't solve CAPTCHAs in a Go process, we
+        // return a clear error so the caller can fall through to other
+        // hosters (StreamWish, FileMoon, MixDrop, etc.).
+        if strings.Contains(bodyStr, "turnstile-container") ||
+                strings.Contains(bodyStr, "challenges.cloudflare.com/turnstile") ||
+                strings.Contains(bodyStr, "captcha_l") {
+                return nil, fmt.Errorf("DoodStream: CAPTCHA (Cloudflare Turnstile) requer interação do usuário — não é possível resolver automaticamente")
+        }
 
-	// Build absolute URL.
-	base, err := getBaseURL(pageURL)
-	if err != nil {
-		return nil, err
-	}
-	passURL := base + match
+        // Step 2: locate /pass_md5/...
+        match := doodPassRe.FindString(bodyStr)
+        if match == "" {
+                return nil, fmt.Errorf("DoodStream: pass_md5 não encontrado na página (possível mudança no layout do site)")
+        }
 
-	// Step 3: GET the pass_md5 endpoint to get the hash.
-	req2, _ := newGet(ctx, passURL, pageURL)
-	resp2, err := client.Do(req2)
-	if err != nil {
-		return nil, err
-	}
-	defer resp2.Body.Close()
-	hash, err := io.ReadAll(resp2.Body)
-	if err != nil {
-		return nil, err
-	}
+        // Build absolute URL.
+        base, err := getBaseURL(pageURL)
+        if err != nil {
+                return nil, err
+        }
+        passURL := base + match
 
-	// Step 4: assemble final URL: hash + randomStr(10) + "?token=" + last segment.
-	segments := strings.Split(passURL, "/")
-	lastSeg := segments[len(segments)-1]
-	token := randomString(10)
-	finalURL := string(hash) + token + "?token=" + lastSeg
+        // Step 3: GET the pass_md5 endpoint to get the hash.
+        req2, _ := newGet(ctx, passURL, pageURL)
+        resp2, err := client.Do(req2)
+        if err != nil {
+                return nil, err
+        }
+        defer resp2.Body.Close()
+        hash, err := io.ReadAll(resp2.Body)
+        if err != nil {
+                return nil, err
+        }
 
-	return &types.ExtractorResult{
-		Hoster:     d.Name(),
-		URL:        rawURL,
-		StatusCode: resp.StatusCode,
-		Videos: []types.Jmodel{
-			{URL: finalURL, Quality: "Normal"},
-		},
-	}, nil
+        // Step 4: assemble final URL: hash + randomStr(10) + "?token=" + last segment.
+        segments := strings.Split(passURL, "/")
+        lastSeg := segments[len(segments)-1]
+        token := randomString(10)
+        finalURL := string(hash) + token + "?token=" + lastSeg
+
+        return &types.ExtractorResult{
+                Hoster:     d.Name(),
+                URL:        rawURL,
+                StatusCode: resp.StatusCode,
+                Videos: []types.Jmodel{
+                        {URL: finalURL, Quality: "Normal"},
+                },
+        }, nil
 }
 
 // getBaseURL extracts scheme://host from a URL.
 func getBaseURL(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	return u.Scheme + "://" + u.Host, nil
+        u, err := url.Parse(rawURL)
+        if err != nil {
+                return "", err
+        }
+        return u.Scheme + "://" + u.Host, nil
 }
 
 // randomString returns a hex-encoded random ASCII string of given length
 // (matching DoodStream.randomStr which uses [A-Za-z0-9]).
 func randomString(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	out := make([]byte, n)
-	for i, v := range b {
-		out[i] = charset[int(v)%len(charset)]
-	}
-	return string(out)
+        b := make([]byte, n)
+        _, _ = rand.Read(b)
+        const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        out := make([]byte, n)
+        for i, v := range b {
+                out[i] = charset[int(v)%len(charset)]
+        }
+        return string(out)
 }
 
 // Unused but kept for parity with the APK (used for debug).

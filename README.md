@@ -375,6 +375,42 @@ curl http://localhost:8080/v1/routes | jq '.routes | length'
 go run ./examples/extract_url.go https://mixdrop.ps/e/mkqwgplli4okq7
 ```
 
+### Test suite de resolução
+
+Roda um conjunto de 16 títulos (12 filmes + 4 episódios de séries) conhecidos como disponíveis no Supercine e verifica se todos resolvem para pelo menos uma URL de vídeo direta:
+
+```bash
+./scripts/test_resolve.sh
+```
+
+Saída esperada:
+
+```
+==========================================
+  Results: 16 passed, 0 failed
+==========================================
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### "DoodStream: CAPTCHA (Cloudflare Turnstile)" 
+
+O DoodStream agora exige um CAPTCHA do Cloudflare Turnstile na página de embed. O extractor não consegue resolver o CAPTCHA automaticamente, então ele falha graciosamente e o proxy tenta o próximo servidor (StreamWish, FileMoon, MixDrop, etc.). Se **todos** os servidores de um título forem DoodStream, a resolução vai falhar — isso é uma limitação do hoster, não do proxy.
+
+### "provider: title not available"
+
+O Supercine não tem esse título no catálogo. O embed-api retorna 0 servidores. Não é um bug — significa que o título não está disponível no upstream.
+
+### MixDrop: URLs com `sub1=` e `sub1_label=`
+
+O Supercine às vezes acrescenta parâmetros de legenda na URL do MixDrop (`?sub1=...&sub1_label=...`). O MixDrop rejeita essas URLs com HTTP 400, então o extractor agora stripa a query string antes de fazer a requisição. A legenda não é necessária para extrair a URL direta do vídeo.
+
+### verifyURL: HEAD retorna 403 no MixDrop CDN
+
+O CDN do MixDrop (`*.mxcontent.net`) rejeita requests HEAD com 403, mesmo para URLs válidas. O `verifyURL` agora usa GET com `Range: bytes=0-1` (que é o que o `<video>` faz no navegador) e envia os headers `Origin` e `Referer` corretos para o CDN do hoster.
+
 ---
 
 ## 🛡️ Aviso legal

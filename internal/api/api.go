@@ -426,13 +426,25 @@ func (a *API) handleExtract(w http.ResponseWriter, r *http.Request) {
 
 // extractRedirectFromEmbed pulls the URL out of:
 //   window.location.href = "https://mixdrop.ps/e/abc123";
+//
+// The Supercine embed-api returns HTML with HTML entities (e.g. "&amp;"
+// instead of "&") inside the URL string. We decode the common entities so
+// the hoster extractor gets a clean URL. Without this, MixDrop URLs with
+// subtitle parameters would be fetched as-is and MixDrop would return an
+// empty page.
 func extractRedirectFromEmbed(body []byte) string {
         re := regexp.MustCompile(`window\.location\.href\s*=\s*"([^"]+)"`)
         m := re.FindStringSubmatch(string(body))
         if len(m) < 2 {
                 return ""
         }
-        return m[1]
+        decoded := m[1]
+        decoded = strings.ReplaceAll(decoded, "&amp;", "&")
+        decoded = strings.ReplaceAll(decoded, "&lt;", "<")
+        decoded = strings.ReplaceAll(decoded, "&gt;", ">")
+        decoded = strings.ReplaceAll(decoded, "&quot;", "\"")
+        decoded = strings.ReplaceAll(decoded, "&#39;", "'")
+        return decoded
 }
 
 // ---- list extractors ----

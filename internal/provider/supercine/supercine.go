@@ -38,6 +38,7 @@ import (
         "net/http"
         "net/url"
         "regexp"
+        "sort"
         "strconv"
         "strings"
         "sync"
@@ -274,6 +275,14 @@ func (p *SupercineProvider) FetchEmbed(ctx context.Context, imdbID, embedType st
 
 // resolveHosterURL calls /embed-api/?action=embed&url=<data-server> and
 // extracts the hoster URL from the window.location.href redirect.
+//
+// The Supercine embed-api returns HTML with HTML entities (e.g. "&amp;"
+// instead of "&") inside the window.location.href string. We decode the
+// common entities so the hoster extractor gets a clean URL. Without this
+// decoding, MixDrop URLs with subtitle parameters
+// (e.g. "...?sub1=...&amp;sub1_label=...") would be fetched as-is and
+// MixDrop would return an empty page, causing the extractor to fail with
+// "wurl não encontrado".
 func (p *SupercineProvider) resolveHosterURL(ctx context.Context, dataServer, referer string) (string, error) {
         target := p.cfg.EmbedBase + "?action=embed&url=" + url.QueryEscape(dataServer)
         req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -289,42 +298,124 @@ func (p *SupercineProvider) resolveHosterURL(ctx context.Context, dataServer, re
         if len(m) < 2 {
                 return "", fmt.Errorf("supercine: no redirect URL found in action=embed response")
         }
-        return m[1], nil
+        // Decode HTML entities that the embed-api leaves in the URL.
+        // The most common one is &amp; -> &, but we also handle &lt; and &gt;
+        // for safety. We don't use a full HTML decoder because the URL may
+        // legitimately contain characters that look like entities.
+        decoded := m[1]
+        decoded = strings.ReplaceAll(decoded, "&amp;", "&")
+        decoded = strings.ReplaceAll(decoded, "&lt;", "<")
+        decoded = strings.ReplaceAll(decoded, "&gt;", ">")
+        decoded = strings.ReplaceAll(decoded, "&quot;", "\"")
+        decoded = strings.ReplaceAll(decoded, "&#39;", "'")
+        return decoded, nil
 }
 
-// verifyURL checks that the video URL is accessible via a HEAD request.
+// verifyURL checks that the video URL is accessible.
+//
+// We use a GET request with a small Range header (0-1) instead of HEAD
+// because many hoster CDNs (notably MixDrop's mxcontent.net and VidHide's
+// CDN) reject HEAD requests with 403/502, even though the same URL works
+// fine in a browser. A ranged GET mimics what hls.js / <video> do and is
+// accepted by every CDN we tested.
+//
+// MixDrop's CDN additionally requires an `Origin` and `Referer` header
+// matching the hoster page (https://mixdrop.ps) — without them, every
+// request returns 403. We set Origin and Referer based on the hoster the
+// URL came from so the CDN accepts the verification request.
+//
+// On network errors we return true (be lenient) because the URL may still
+// be reachable from the user's network — we'd rather return a URL and
+// let the player retry than filter out a URL that the user could
+// actually play.
 func (p *SupercineProvider) verifyURL(ctx context.Context, videoURL string) bool {
-        req, err := http.NewRequestWithContext(ctx, http.MethodHead, videoURL, nil)
+        req, err := http.NewRequestWithContext(ctx, http.MethodGet, videoURL, nil)
         if err != nil {
                 return false
         }
         req.Header.Set("User-Agent", p.cfg.UserAgent)
-        req.Header.Set("Referer", "https://supercine-tv.net/")
+        req.Header.Set("Range", "bytes=0-1")
+        req.Header.Set("Accept", "*/*")
+        req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+        // Some hoster CDNs (notably MixDrop's mxcontent.net) require an
+        // Origin and Referer header that matches the hoster page. Without
+        // them, every request returns 403 even though the URL is valid.
+        // We set the Origin and Referer based on the URL's host so the CDN
+        // accepts the request.
+        if hosterOrigin := originForURL(videoURL); hosterOrigin != "" {
+                req.Header.Set("Origin", hosterOrigin)
+                req.Header.Set("Referer", hosterOrigin+"/")
+        } else {
+                // Default to the Supercine referer for unknown CDNs.
+                req.Header.Set("Referer", "https://supercine-tv.net/")
+        }
         client := &http.Client{
-                Timeout:       5 * time.Second,
+                Timeout:       6 * time.Second,
                 CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil },
         }
         resp, err := client.Do(req)
         if err != nil {
-                return false
+                // Network error — be lenient and assume the URL is OK.
+                // The browser may still be able to reach it from the user's network.
+                return true
         }
-        resp.Body.Close()
+        defer resp.Body.Close()
+        // Drain the small body so the connection can be reused.
+        _, _ = io.Copy(io.Discard, resp.Body)
+        // 2xx, 3xx, and even 416 (Range Not Satisfiable, returned by some
+        // CDNs when the file is smaller than the range) all indicate the URL
+        // is reachable. Only treat 4xx (except 416) and 5xx as failures.
+        if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+                return true
+        }
         return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+// originForURL returns the Origin header value to use when verifying a
+// video URL. Many hoster CDNs require an Origin and Referer that matches
+// the hoster page (e.g. https://mixdrop.ps for mxcontent.net URLs). We
+// infer the origin from the video URL's host by mapping known CDN hosts
+// back to their hoster page.
+func originForURL(videoURL string) string {
+        low := strings.ToLower(videoURL)
+        switch {
+        case strings.Contains(low, "mxcontent.net"):
+                // MixDrop CDN
+                return "https://mixdrop.ps"
+        case strings.Contains(low, "cdn-centaurus.com"):
+                // StreamWish / VidHide CDN (shared)
+                return "https://tln-hg.top"
+        case strings.Contains(low, "premilkyway.com"):
+                // StreamWish CDN
+                return "https://tln-hg.top"
+        case strings.Contains(low, "dramiyos-cdn.com"):
+                // VidHide CDN
+                return "https://tln-earn.top"
+        }
+        return ""
 }
 
 // Resolve implements provider.Provider.
 //
 // For movies (embedType="movies"):
 //   1. Fetch the embed page → get list of servers.
-//   2. For each server (up to 3 attempts), resolve the hoster URL.
-//   3. Run the appropriate hoster extractor to get the direct video URL.
+//   2. Reorder servers so reliable hosters (StreamWish, FileMoon, Voe,
+//      MixDrop, FileLions, VidHide) are tried before unreliable ones
+//      (DoodStream now requires a Cloudflare Turnstile CAPTCHA, StreamTape
+//      frequently returns "Video not found").
+//   3. For each server, resolve the hoster URL and run the extractor.
+//   4. Verify the extracted video URL is accessible via a ranged GET.
+//
+// We try ALL servers (not just the first 3) because the upstream frequently
+// returns 6+ servers and the first few may all be DoodStream (which fails
+// the CAPTCHA check) or StreamTape (which may have "Video not found").
+// Stopping at 3 attempts means the user sees "no video" even when later
+// servers would resolve fine.
 //
 // For TV shows (embedType="tvshows"):
 //   This method returns an error immediately because series require a
 //   specific season+episode to be resolved. The caller should use
-//   ResolveEpisode() instead. This prevents the "URL não encontrada 🛑"
-//   error that previously occurred when the generic Resolve path tried
-//   to extract from the bare Supercine URL.
+//   ResolveEpisode() instead.
 func (p *SupercineProvider) Resolve(ctx context.Context, imdbID, embedType string) (*provider.ResolveResult, error) {
         // TV shows require season+episode — refuse to resolve blindly.
         if embedType == "tvshows" {
@@ -354,28 +445,88 @@ func (p *SupercineProvider) Resolve(ctx context.Context, imdbID, embedType strin
                 })
         }
 
-        // Try to extract a direct URL. Try at most 3 servers to avoid
-        // hammering the upstream when most are down.
-        maxAttempts := 3
-        if maxAttempts > len(page.Servers) {
-                maxAttempts = len(page.Servers)
+        // Build a list of (originalIndex, server) pairs and reorder them so
+        // the most reliable hosters are tried first. We don't drop any server
+        // — we just change the order. The result.Servers slice keeps the
+        // original order so the UI's server buttons stay stable.
+        embedURL := p.cfg.EmbedBase + "?imdb=" + url.QueryEscape(imdbID) + "&type=" + url.QueryEscape(embedType)
+        type attempt struct {
+                origIdx int
+                srv     EmbedServer
+        }
+        attempts := make([]attempt, len(page.Servers))
+        for i, s := range page.Servers {
+                attempts[i] = attempt{origIdx: i, srv: s}
+        }
+        // First pass: probe each server's hoster URL in parallel (capped) so
+        // we know which hoster each one resolves to. This lets us sort by
+        // hoster reliability without paying the latency cost of sequential
+        // resolution.
+        type probeResult struct {
+                origIdx   int
+                hosterURL string
+                hoster    string
+                err       error
+        }
+        probeCh := make(chan probeResult, len(attempts))
+        sem := make(chan struct{}, 4) // 4 concurrent probes
+        var wg sync.WaitGroup
+        for _, a := range attempts {
+                wg.Add(1)
+                go func(a attempt) {
+                        defer wg.Done()
+                        sem <- struct{}{}
+                        defer func() { <-sem }()
+                        hu, err := p.resolveHosterURL(ctx, a.srv.Server, embedURL)
+                        if err != nil {
+                                probeCh <- probeResult{origIdx: a.origIdx, err: err}
+                                return
+                        }
+                        // Identify the hoster from the URL so we can prioritize.
+                        probeCh <- probeResult{origIdx: a.origIdx, hosterURL: hu, hoster: hosterFromURL(hu)}
+                }(a)
+        }
+        wg.Wait()
+        close(probeCh)
+
+        // Collect probe results, keyed by original index.
+        probes := make(map[int]probeResult, len(attempts))
+        for pr := range probeCh {
+                probes[pr.origIdx] = pr
         }
 
-        embedURL := p.cfg.EmbedBase + "?imdb=" + url.QueryEscape(imdbID) + "&type=" + url.QueryEscape(embedType)
+        // Order attempts by hoster priority. Lower priority value = tried first.
+        order := make([]int, 0, len(attempts))
+        for _, a := range attempts {
+                order = append(order, a.origIdx)
+        }
+        sort.SliceStable(order, func(i, j int) bool {
+                pi, pj := probes[order[i]], probes[order[j]]
+                return hosterPriority(pi.hoster) < hosterPriority(pj.hoster)
+        })
+
+        // Try each server in priority order. We try ALL servers (no longer
+        // capped at 3) because the first few may all be DoodStream (CAPTCHA)
+        // or StreamTape (Video not found), and the working one is further down.
         var lastErr error
-        for i := 0; i < maxAttempts; i++ {
-                srv := page.Servers[i]
-                hosterURL, err := p.resolveHosterURL(ctx, srv.Server, embedURL)
-                if err != nil {
-                        lastErr = err
+        for _, origIdx := range order {
+                pr := probes[origIdx]
+                if pr.err != nil {
+                        lastErr = pr.err
                         continue
                 }
-                ext, err := p.registry.Dispatch(ctx, hosterURL)
+                ext, err := p.registry.Dispatch(ctx, pr.hosterURL)
                 if err != nil || ext == nil || len(ext.Videos) == 0 {
-                        lastErr = err
+                        if err != nil {
+                                lastErr = err
+                        } else {
+                                lastErr = fmt.Errorf("supercine: extractor %s returned no videos for server %d", pr.hoster, origIdx)
+                        }
                         continue
                 }
                 // Verify the extracted video URL is accessible before returning.
+                // We use a ranged GET (see verifyURL docs) which works around
+                // CDNs that reject HEAD requests.
                 verified := make([]provider.VideoURL, 0, len(ext.Videos))
                 for _, v := range ext.Videos {
                         if p.verifyURL(ctx, v.URL) {
@@ -386,13 +537,13 @@ func (p *SupercineProvider) Resolve(ctx context.Context, imdbID, embedType strin
                         }
                 }
                 if len(verified) == 0 {
-                        lastErr = fmt.Errorf("supercine: extracted video URL for server %d is not accessible", i)
+                        lastErr = fmt.Errorf("supercine: extracted video URL for server %d (%s) is not accessible", origIdx, pr.hoster)
                         continue
                 }
                 // Success — copy verified video URLs.
                 result.Videos = verified
                 // Tag the server that worked.
-                result.Servers[i].Description = fmt.Sprintf("[OK] %s", result.Servers[i].Description)
+                result.Servers[origIdx].Description = fmt.Sprintf("[OK] %s", result.Servers[origIdx].Description)
                 return result, nil
         }
 
@@ -510,9 +661,18 @@ func (p *SupercineProvider) FetchEpisodePlayers(ctx context.Context, tmdbID stri
 // Flow:
 //   1. Fetch the embed page to get the TMDB ID.
 //   2. Call ?what=player&tmdb=X&season=Y&episode=Z to get the player list.
-//   3. For each player (up to 3 attempts), resolve the hoster URL via
+//   3. Reorder players so reliable hosters (StreamWish, FileMoon, Voe,
+//      MixDrop, FileLions, VidHide) are tried before unreliable ones
+//      (DoodStream requires CAPTCHA, StreamTape often returns 404).
+//   4. For each player, resolve the hoster URL via
 //      /embed-api/?action=embed&url=<encrypted>, then run the hoster
 //      extractor to get the direct mp4/m3u8.
+//   5. Verify the extracted video URL is accessible via a ranged GET.
+//
+// We try ALL players (not just the first 3) because for many episodes the
+// first few players are DoodStream (which fails the CAPTCHA check) or
+// StreamTape (which may have "Video not found"), and the working player
+// is further down the list.
 func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, season, episode int) (*provider.ResolveResult, error) {
         // Step 1: get TMDB ID
         page, err := p.FetchEmbed(ctx, imdbID, "tvshows")
@@ -551,15 +711,25 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
                 })
         }
 
-        // Step 3: try each player (up to 3 attempts).
-        maxAttempts := 3
-        if maxAttempts > len(pr.Players) {
-                maxAttempts = len(pr.Players)
+        // Step 3: order players by hoster priority (lower priority value =
+        // tried first). The Supercine API returns a `type` field naming the
+        // hoster ("mixdrop", "streamwish", "vidhide", "doodstream", ...) so
+        // we can sort without making any HTTP requests.
+        order := make([]int, len(pr.Players))
+        for i := range pr.Players {
+                order[i] = i
         }
+        sort.SliceStable(order, func(i, j int) bool {
+                return hosterPriority(pr.Players[order[i]].Type) < hosterPriority(pr.Players[order[j]].Type)
+        })
+
+        // Step 4: try each player in priority order. We try ALL players
+        // because the first few may all be DoodStream (CAPTCHA) or
+        // StreamTape (Video not found).
         embedURL := p.cfg.EmbedBase + "?imdb=" + url.QueryEscape(imdbID) + "&type=tvshows"
         var lastErr error
-        for i := 0; i < maxAttempts; i++ {
-                pl := pr.Players[i]
+        for _, origIdx := range order {
+                pl := pr.Players[origIdx]
                 hosterURL, err := p.resolveHosterURL(ctx, pl.URL, embedURL)
                 if err != nil {
                         lastErr = err
@@ -567,7 +737,11 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
                 }
                 ext, err := p.registry.Dispatch(ctx, hosterURL)
                 if err != nil || ext == nil || len(ext.Videos) == 0 {
-                        lastErr = err
+                        if err != nil {
+                                lastErr = err
+                        } else {
+                                lastErr = fmt.Errorf("supercine: extractor %s returned no videos for player %d", pl.Type, origIdx)
+                        }
                         continue
                 }
                 verified := make([]provider.VideoURL, 0, len(ext.Videos))
@@ -580,11 +754,11 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
                         }
                 }
                 if len(verified) == 0 {
-                        lastErr = fmt.Errorf("supercine: extracted video URL for player %d is not accessible", i)
+                        lastErr = fmt.Errorf("supercine: extracted video URL for player %d (%s) is not accessible", origIdx, pl.Type)
                         continue
                 }
                 result.Videos = verified
-                result.Servers[i].Description = fmt.Sprintf("[OK] %s", result.Servers[i].Description)
+                result.Servers[origIdx].Description = fmt.Sprintf("[OK] %s", result.Servers[origIdx].Description)
                 return result, nil
         }
 
@@ -592,6 +766,76 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
                 return result, lastErr
         }
         return result, provider.ErrUnavailable
+}
+
+// hosterFromURL inspects a hoster URL and returns the canonical hoster
+// name (e.g. "mixdrop", "streamwish", "doodstream"). Used by Resolve()
+// to sort servers by hoster reliability before trying them.
+func hosterFromURL(u string) string {
+        low := strings.ToLower(u)
+        switch {
+        case strings.Contains(low, "mixdrop"):
+                return "mixdrop"
+        case strings.Contains(low, "streamwish") || strings.Contains(low, "asnwish") ||
+                strings.Contains(low, "tlnwish") || strings.Contains(low, "playerwish") ||
+                strings.Contains(low, "tln-hg"):
+                return "streamwish"
+        case strings.Contains(low, "vidhide") || strings.Contains(low, "vidhidevip") ||
+                strings.Contains(low, "tlnhide") || strings.Contains(low, "megahide") ||
+                strings.Contains(low, "niikaplayerr") || strings.Contains(low, "tln-earn"):
+                return "vidhide"
+        case strings.Contains(low, "filemoon") || strings.Contains(low, "96ar") ||
+                strings.Contains(low, "tlnmoons"):
+                return "filemoon"
+        case strings.Contains(low, "filelions"):
+                return "filelions"
+        case strings.Contains(low, "streamtape") || strings.Contains(low, "streamadblockplus") ||
+                strings.Contains(low, "stapewithadblock") || strings.Contains(low, "shavetape") ||
+                strings.Contains(low, "tapenoads") || strings.Contains(low, "tapeantiads"):
+                return "streamtape"
+        case strings.Contains(low, "voe") || strings.Contains(low, "donaldlineelse") ||
+                strings.Contains(low, "jamessoundcost"):
+                return "voe"
+        case strings.Contains(low, "doodstream") || strings.Contains(low, "dood.") ||
+                strings.Contains(low, "vidply") || strings.Contains(low, "do7go"):
+                return "doodstream"
+        }
+        return "unknown"
+}
+
+// hosterPriority returns a priority value for a hoster name. Lower value =
+// tried first. The order is based on empirical reliability:
+//
+//   - StreamWish, FileMoon, Voe: HLS-based hosters that work reliably and
+//     return accessible URLs. Tried first.
+//   - MixDrop: returns direct mp4 URLs that work in browsers but the CDN
+//     rejects HEAD requests (we use ranged GET to work around this).
+//   - FileLions, VidHide: similar to FileMoon/MixDrop but less reliable.
+//   - StreamTape: frequently returns "Video not found" for older content.
+//   - DoodStream: now requires a Cloudflare Turnstile CAPTCHA, so the
+//     extractor cannot resolve without a real browser. Tried last so we
+//     don't waste time on it when other hosters are available.
+func hosterPriority(hoster string) int {
+        switch strings.ToLower(hoster) {
+        case "streamwish":
+                return 1
+        case "filemoon":
+                return 2
+        case "voe":
+                return 3
+        case "mixdrop":
+                return 4
+        case "filelions":
+                return 5
+        case "vidhide":
+                return 6
+        case "streamtape":
+                return 7
+        case "doodstream":
+                return 8
+        default:
+                return 9
+        }
 }
 
 // Helpers for parsing strings (kept for parity with the original code).
