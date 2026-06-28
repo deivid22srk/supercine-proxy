@@ -113,33 +113,59 @@ function showHome() {
 // ============ LOAD HOME ============
 async function loadHome() {
   // Render loading placeholders so the user sees something immediately.
-  ['#rowMovies', '#rowTV', '#rowClassics'].forEach(sel => {
-    $(sel).innerHTML = Array.from({length: 8}).map(() => makeSkeletonCard()).join('');
+  const rowIds = [
+    '#rowMoviesLancamentos', '#rowMoviesDestaques',
+    '#rowMoviesRecentes', '#rowMoviesSugeridos',
+    '#rowTVLancamentos', '#rowTVDestaques',
+    '#rowTVRecentes', '#rowTVSugeridos'
+  ];
+  rowIds.forEach(sel => {
+    if ($(sel)) $(sel).innerHTML = Array.from({length: 6}).map(() => makeSkeletonCard()).join('');
   });
 
-  // Load popular movies + TV + classics in parallel.
-  const [movies, tv, classics] = await Promise.all([
-    fetchJSON(`${API}/catalog/popular?type=movies&limit=40`),
-    fetchJSON(`${API}/catalog/popular?type=tvshows&limit=20`),
-    fetchJSON(`${API}/catalog/popular?type=movies&limit=30`), // we'll filter classics client-side
+  // Load home rows for both types in parallel.
+  const [moviesHome, tvHome] = await Promise.all([
+    fetchJSON(`${API}/catalog/home?type=movies`),
+    fetchJSON(`${API}/catalog/home?type=tvshows`),
   ]);
 
-  state.popular.movies = (movies && movies.items) || [];
-  state.popular.tv = (tv && tv.items) || [];
-  // Classics = movies with year < 2005 from the popular list.
-  state.popular.classics = ((classics && classics.items) || []).filter(m => m.year && m.year < 2005);
+  // Render movies rows
+  if (moviesHome && moviesHome.rows) {
+    const mapping = {
+      'lancamentos': '#rowMoviesLancamentos',
+      'destaques':   '#rowMoviesDestaques',
+      'recentes':    '#rowMoviesRecentes',
+      'sugeridos':   '#rowMoviesSugeridos'
+    };
+    let heroCandidate = null;
+    for (const row of moviesHome.rows) {
+      const sel = mapping[row.category];
+      if (!sel || !$(sel)) continue;
+      renderRow(sel, row.items);
+      // Pick the first available movie as hero
+      if (!heroCandidate) {
+        heroCandidate = row.items.find(i => i.available) || row.items[0];
+      }
+    }
+    if (heroCandidate) {
+      state.heroItem = heroCandidate;
+      renderHero(heroCandidate);
+    }
+  }
 
-  // Pick hero — first available movie.
-  state.heroItem = state.popular.movies.find(m => m.available) || state.popular.movies[0];
-  if (state.heroItem) renderHero(state.heroItem);
-
-  // Render rows.
-  renderRow('#rowMovies', state.popular.movies);
-  renderRow('#rowTV', state.popular.tv);
-  if (state.popular.classics.length > 0) {
-    renderRow('#rowClassics', state.popular.classics);
-  } else {
-    $('#rowClassicsContainer').hidden = true;
+  // Render TV rows
+  if (tvHome && tvHome.rows) {
+    const mapping = {
+      'lancamentos': '#rowTVLancamentos',
+      'destaques':   '#rowTVDestaques',
+      'recentes':    '#rowTVRecentes',
+      'sugeridos':   '#rowTVSugeridos'
+    };
+    for (const row of tvHome.rows) {
+      const sel = mapping[row.category];
+      if (!sel || !$(sel)) continue;
+      renderRow(sel, row.items);
+    }
   }
 }
 

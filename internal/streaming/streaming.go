@@ -41,7 +41,7 @@ import (
         "github.com/deivid22srk/supercine-proxy/internal/enricher"
         "github.com/deivid22srk/supercine-proxy/internal/imdb"
         "github.com/deivid22srk/supercine-proxy/internal/provider"
-        "github.com/deivid22srk/supercine-proxy/internal/provider/supercine"
+        super "github.com/deivid22srk/supercine-proxy/internal/provider/supercine"
 )
 
 // Handler exposes catalog/search/resolve endpoints under /v1/.
@@ -61,6 +61,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
         mux.HandleFunc("/v1/catalog/search", h.handleSearch)
         mux.HandleFunc("/v1/catalog/resolve", h.handleResolve)
         mux.HandleFunc("/v1/catalog/movie/", h.handleResolvePath)
+        mux.HandleFunc("/v1/catalog/home", h.handleHome)
         mux.HandleFunc("/v1/providers", h.handleProviders)
         mux.HandleFunc("/v1/resolve", h.handleResolveVideo)
         mux.HandleFunc("/v1/seasons", h.handleSeasons)
@@ -238,14 +239,112 @@ func (h *Handler) handleResolveVideo(w http.ResponseWriter, r *http.Request) {
 
         result, err := h.registry.Resolve(ctx, params.IMDB, params.Type, params.Provider)
         if err != nil {
-                writeJSON(w, http.StatusBadGateway, map[string]any{
-                        "error":    err.Error(),
+                // If user tried to resolve a TV show without season+episode, give
+                // them a clear, actionable error pointing to /v1/resolveEpisode.
+                errMsg := err.Error()
+                statusCode := http.StatusBadGateway
+                if params.Type == "tvshows" {
+                        errMsg = "séries requerem season+episode. Use GET /v1/resolveEpisode?imdb=...&season=1&episode=1 ou GET /v1/seasons?imdb=... para listar as temporadas."
+                        statusCode = http.StatusBadRequest
+                }
+                writeJSON(w, statusCode, map[string]any{
+                        "error":    errMsg,
                         "imdb":     params.IMDB,
                         "type":     params.Type,
                 })
                 return
         }
         writeJSON(w, http.StatusOK, result)
+}
+
+// handleHome returns the four home-screen rows (lancamentos, destaques,
+// recentes, sugeridos) for the given type. Each row comes directly from
+// the Supercine /api/<type>?what=<category> endpoint and contains 12
+// items each with title, poster, backdrop, year, rating, etc.
+//
+//   GET /v1/catalog/home?type=movies
+//   GET /v1/catalog/home?type=tvshows
+//
+// This replaces the old hardcoded PopularMovies/PopularTV lists for the
+// home screen. /v1/catalog/popular is still available for fallback.
+func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
+        ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+        defer cancel()
+
+        embedType := strings.ToLower(r.URL.Query().Get("type"))
+        if embedType != "tvshows" {
+                embedType = "movies"
+        }
+
+        sp := h.findSupercineProvider()
+        if sp == nil {
+                writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+                        "error": "nenhum provedor com home endpoint está registrado",
+                })
+                return
+        }
+
+        rows, err := sp.FetchAllHome(ctx, embedType)
+        if err != nil {
+                writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+                return
+        }
+
+        // Convert HomeItem to MovieMeta-like shape so the UI can use the
+        // same card rendering code.
+        type HomeRow struct {
+                Category string                  `json:"category"`
+                Label    string                  `json:"label"`
+                Count    int                     `json:"count"`
+                Items    []map[string]any        `json:"items"`
+        }
+
+        labels := map[super.HomeCategory]string{
+                super.CategoryLancamentos: "🔥 Lançamentos",
+                super.CategoryDestaques:   "⭐ Destaques",
+                super.CategoryRecentes:    "🆕 Recentes",
+                super.CategorySugeridos:   "💡 Sugeridos",
+        }
+
+        order := []super.HomeCategory{super.CategoryLancamentos, super.CategoryDestaques, super.CategoryRecentes, super.CategorySugeridos}
+        out := make([]HomeRow, 0, len(order))
+        for _, cat := range order {
+                items := rows[cat]
+                row := HomeRow{
+                        Category: string(cat),
+                        Label:    labels[cat],
+                        Count:    len(items),
+                        Items:    make([]map[string]any, 0, len(items)),
+                }
+                for _, hi := range items {
+                        row.Items = append(row.Items, map[string]any{
+                                "imdb":         hi.IMDB,
+                                "type":         embedTypeToType(hi.Type),
+                                "embed_type":   hi.Type,
+                                "title_ptbr":   hi.Title,
+                                "title_orig":   "", // Home endpoint doesn't return original title
+                                "year":         hi.Year,
+                                "poster_url":   hi.Poster,
+                                "backdrop_url": hi.BackdropPath,
+                                "cast":         "",
+                                "rank":         0,
+                                "available":    hi.IMDB != "",
+                                "server_count": 0, // not enriched
+                                "provider":     "supercine",
+                                "imdb_rating":  hi.IMDBRating,
+                                "runtime":      hi.Runtime,
+                                "categories":   hi.Category,
+                                "post_id":      hi.PostID,
+                        })
+                }
+                out = append(out, row)
+        }
+
+        writeJSON(w, http.StatusOK, map[string]any{
+                "type":  embedType,
+                "count": len(out),
+                "rows":  out,
+        })
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -395,14 +494,22 @@ func (h *Handler) handleResolveEpisode(w http.ResponseWriter, r *http.Request) {
 // FetchSeasons/ResolveEpisode are Supercine-specific methods not on the
 // common Provider interface. When more providers add series support we'll
 // extract a SeriesProvider interface.
-func (h *Handler) findSupercineProvider() *supercine.SupercineProvider {
+func (h *Handler) findSupercineProvider() *super.SupercineProvider {
         p := h.registry.Get("supercine")
         if p == nil {
                 return nil
         }
-        sp, ok := p.(*supercine.SupercineProvider)
+        sp, ok := p.(*super.SupercineProvider)
         if !ok {
                 return nil
         }
         return sp
+}
+
+// embedTypeToType converts the Supercine embed type to our internal type.
+func embedTypeToType(embedType string) string {
+        if embedType == "tvshows" {
+                return "tv"
+        }
+        return "movie"
 }

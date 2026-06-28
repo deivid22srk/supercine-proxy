@@ -73,19 +73,46 @@
 
     <!-- Home content (visible by default) -->
     <div id="homeContent">
-      <section class="content-row" id="movies">
-        <h2 class="row-title">🔥 Filmes populares</h2>
-        <div class="card-row" id="rowMovies"></div>
+      <!-- Movies sections — populated from /v1/catalog/home?type=movies -->
+      <section class="content-row" id="moviesLancamentos">
+        <h2 class="row-title">🔥 Filmes — Lançamentos</h2>
+        <div class="card-row" id="rowMoviesLancamentos"></div>
       </section>
 
-      <section class="content-row" id="tv">
-        <h2 class="row-title">📺 Séries populares</h2>
-        <div class="card-row" id="rowTV"></div>
+      <section class="content-row" id="moviesDestaques">
+        <h2 class="row-title">⭐ Filmes — Destaques</h2>
+        <div class="card-row" id="rowMoviesDestaques"></div>
       </section>
 
-      <section class="content-row" id="rowClassicsContainer">
-        <h2 class="row-title">🏆 Clássicos atemporais</h2>
-        <div class="card-row" id="rowClassics"></div>
+      <section class="content-row" id="moviesRecentes">
+        <h2 class="row-title">🆕 Filmes — Recentes</h2>
+        <div class="card-row" id="rowMoviesRecentes"></div>
+      </section>
+
+      <section class="content-row" id="moviesSugeridos">
+        <h2 class="row-title">💡 Filmes — Sugeridos</h2>
+        <div class="card-row" id="rowMoviesSugeridos"></div>
+      </section>
+
+      <!-- TV sections — populated from /v1/catalog/home?type=tvshows -->
+      <section class="content-row" id="tvLancamentos">
+        <h2 class="row-title">🔥 Séries — Lançamentos</h2>
+        <div class="card-row" id="rowTVLancamentos"></div>
+      </section>
+
+      <section class="content-row" id="tvDestaques">
+        <h2 class="row-title">⭐ Séries — Destaques</h2>
+        <div class="card-row" id="rowTVDestaques"></div>
+      </section>
+
+      <section class="content-row" id="tvRecentes">
+        <h2 class="row-title">🆕 Séries — Recentes</h2>
+        <div class="card-row" id="rowTVRecentes"></div>
+      </section>
+
+      <section class="content-row" id="tvSugeridos">
+        <h2 class="row-title">💡 Séries — Sugeridos</h2>
+        <div class="card-row" id="rowTVSugeridos"></div>
       </section>
     </div>
   </main>

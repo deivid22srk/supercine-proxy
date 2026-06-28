@@ -40,6 +40,7 @@ import (
         "regexp"
         "strconv"
         "strings"
+        "sync"
         "time"
 
         "github.com/PuerkitoBio/goquery"
@@ -293,13 +294,23 @@ func (p *SupercineProvider) resolveHosterURL(ctx context.Context, dataServer, re
 
 // Resolve implements provider.Provider.
 //
-// Flow:
+// For movies (embedType="movies"):
 //   1. Fetch the embed page → get list of servers.
 //   2. For each server (up to 3 attempts), resolve the hoster URL.
 //   3. Run the appropriate hoster extractor to get the direct video URL.
-//   4. Return the first successful result with all servers listed for
-//      fallback (the UI can retry with a different server on failure).
+//
+// For TV shows (embedType="tvshows"):
+//   This method returns an error immediately because series require a
+//   specific season+episode to be resolved. The caller should use
+//   ResolveEpisode() instead. This prevents the "URL não encontrada 🛑"
+//   error that previously occurred when the generic Resolve path tried
+//   to extract from the bare Supercine URL.
 func (p *SupercineProvider) Resolve(ctx context.Context, imdbID, embedType string) (*provider.ResolveResult, error) {
+        // TV shows require season+episode — refuse to resolve blindly.
+        if embedType == "tvshows" {
+                return nil, fmt.Errorf("séries requerem season+episode — use ResolveEpisode(imdb, season, episode) em vez de Resolve()")
+        }
+
         page, err := p.FetchEmbed(ctx, imdbID, embedType)
         if err != nil {
                 return nil, fmt.Errorf("%w: %v", provider.ErrProviderDown, err)
@@ -549,3 +560,165 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
 // Helpers for parsing strings (kept for parity with the original code).
 var _ = strconv.Atoi
 var _ = strings.TrimSpace
+
+// ===== Home / discovery =====
+
+// HomeCategory is one of the named sections shown on the app home screen.
+// The Supercine app has hardcoded labels matching these strings.
+type HomeCategory string
+
+const (
+        CategoryLancamentos HomeCategory = "lancamentos" // "Lançamentos" — new releases
+        CategoryDestaques   HomeCategory = "destaques"   // "Destaques" — featured
+        CategoryRecentes    HomeCategory = "recentes"    // "Recentes" — recently added
+        CategorySugeridos   HomeCategory = "sugeridos"   // "Sugeridos" — recommended
+        CategoryRecomendados HomeCategory = "recomendados" // alias for sugeridos
+)
+
+// HomeItem is one title returned by the home endpoint. The shape is the
+// on-wire response from /api/<type>?what=<category>&version=1.0&origin=web.
+type HomeItem struct {
+        Type         string         `json:"type"`          // "movies" or "tvshows"
+        PostID       string         `json:"post_id"`       // Supercine internal ID
+        Title        string         `json:"title"`         // PT-BR title
+        Category     []HomeCategory `json:"category"`      // [{name: "Crime"}, ...]
+        IMDB         string         `json:"imdb"`          // IMDB ID
+        Poster       string         `json:"poster"`        // TMDB poster URL
+        BackdropPath string         `json:"backdrop_path"` // TMDB backdrop URL
+        IMDBRating   float64        `json:"imdbRating"`    // IMDB rating
+        Year         int            `json:"year"`          // release year
+        Runtime      string         `json:"runtime"`       // human-readable runtime
+}
+
+// rawHomeItem is the on-wire shape (Category comes as []struct{Name string}).
+type rawHomeItem struct {
+        Type         string `json:"type"`
+        PostID       string `json:"post_id"`
+        Title        string `json:"title"`
+        Category     []struct {
+                Name string `json:"name"`
+        } `json:"category"`
+        IMDB         string `json:"imdb"`
+        Poster       string `json:"poster"`
+        BackdropPath string `json:"backdrop_path"`
+        IMDBRating   string `json:"imdbRating"`
+        Year         string `json:"year"` // comes as string ("2026"), parse with atoiSafe
+        Runtime      string `json:"runtime"`
+}
+
+// HomeResponse is the JSON returned by /api/<type>?what=<category>.
+type HomeResponse struct {
+        Status string     `json:"status"`
+        Data   []HomeItem `json:"data"`
+}
+
+// rawHomeResponse is the on-wire shape that we parse then convert.
+type rawHomeResponse struct {
+        Status string         `json:"status"`
+        Data   []rawHomeItem  `json:"data"`
+}
+
+// FetchHome returns the list of titles for a given (type, category) combo.
+//
+//   type:     "movies" or "tvshows"
+//   category: "lancamentos", "destaques", "recentes", "sugeridos", "recomendados"
+//
+// This is what the Supercine app shows on the home screen under each row.
+// We call /wp-json/api/<type>?what=<category>&version=1.0&origin=web and
+// normalize the response.
+func (p *SupercineProvider) FetchHome(ctx context.Context, embedType string, category HomeCategory) (*HomeResponse, error) {
+        if embedType != "movies" && embedType != "tvshows" {
+                return nil, fmt.Errorf("supercine: tipo inválido %q (esperado movies ou tvshows)", embedType)
+        }
+        if category == "" {
+                category = CategoryLancamentos
+        }
+
+        target := fmt.Sprintf("%s/%s?what=%s&version=1.0&origin=web",
+                p.cfg.APIBase, embedType, url.QueryEscape(string(category)))
+        req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+        req.Header.Set("User-Agent", p.cfg.UserAgent)
+        req.Header.Set("Referer", "https://supercine-tv.net/")
+        req.Header.Set("Accept", "application/json")
+        resp, err := p.http.Do(req)
+        if err != nil {
+                return nil, err
+        }
+        defer resp.Body.Close()
+        body, _ := io.ReadAll(resp.Body)
+
+        var raw rawHomeResponse
+        if err := json.Unmarshal(body, &raw); err != nil {
+                return nil, fmt.Errorf("supercine: failed to decode home response: %w", err)
+        }
+        if raw.Status != "success" {
+                return nil, fmt.Errorf("supercine: home request failed: %s", raw.Status)
+        }
+
+        hr := &HomeResponse{
+                Status: raw.Status,
+                Data:   make([]HomeItem, 0, len(raw.Data)),
+        }
+        for _, ri := range raw.Data {
+                item := HomeItem{
+                        Type:         ri.Type,
+                        PostID:       ri.PostID,
+                        Title:        ri.Title,
+                        IMDB:         ri.IMDB,
+                        Poster:       ri.Poster,
+                        BackdropPath: ri.BackdropPath,
+                        IMDBRating:   atofSafe(ri.IMDBRating),
+                        Year:         atoiSafe(ri.Year),
+                        Runtime:      ri.Runtime,
+                }
+                for _, c := range ri.Category {
+                        item.Category = append(item.Category, HomeCategory(c.Name))
+                }
+                hr.Data = append(hr.Data, item)
+        }
+        return hr, nil
+}
+
+// atofSafe parses a string to float64, returning 0 on error.
+func atofSafe(s string) float64 {
+        f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+        return f
+}
+
+// FetchAllHome returns all 4 home categories (lancamentos, destaques,
+// recentes, sugeridos) for a given type, in parallel. Useful for
+// populating the home screen of the UI in one call.
+//
+// Returns a map keyed by category name (e.g. "lancamentos", "destaques",
+// "recentes", "sugeridos").
+func (p *SupercineProvider) FetchAllHome(ctx context.Context, embedType string) (map[HomeCategory][]HomeItem, error) {
+        categories := []HomeCategory{CategoryLancamentos, CategoryDestaques, CategoryRecentes, CategorySugeridos}
+        out := make(map[HomeCategory][]HomeItem, len(categories))
+        var mu sync.Mutex
+        var wg sync.WaitGroup
+        errs := make([]error, len(categories))
+
+        for i, cat := range categories {
+                wg.Add(1)
+                go func(idx int, c HomeCategory) {
+                        defer wg.Done()
+                        hr, err := p.FetchHome(ctx, embedType, c)
+                        mu.Lock()
+                        defer mu.Unlock()
+                        if err != nil {
+                                errs[idx] = err
+                                return
+                        }
+                        out[c] = hr.Data
+                }(i, cat)
+        }
+        wg.Wait()
+
+        // Return the first non-nil error, if any.
+        for _, e := range errs {
+                if e != nil {
+                        return out, e
+                }
+        }
+        return out, nil
+}
