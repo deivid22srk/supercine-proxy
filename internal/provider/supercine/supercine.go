@@ -292,6 +292,26 @@ func (p *SupercineProvider) resolveHosterURL(ctx context.Context, dataServer, re
         return m[1], nil
 }
 
+// verifyURL checks that the video URL is accessible via a HEAD request.
+func (p *SupercineProvider) verifyURL(ctx context.Context, videoURL string) bool {
+        req, err := http.NewRequestWithContext(ctx, http.MethodHead, videoURL, nil)
+        if err != nil {
+                return false
+        }
+        req.Header.Set("User-Agent", p.cfg.UserAgent)
+        req.Header.Set("Referer", "https://supercine-tv.net/")
+        client := &http.Client{
+                Timeout:       5 * time.Second,
+                CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil },
+        }
+        resp, err := client.Do(req)
+        if err != nil {
+                return false
+        }
+        resp.Body.Close()
+        return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
 // Resolve implements provider.Provider.
 //
 // For movies (embedType="movies"):
@@ -355,13 +375,22 @@ func (p *SupercineProvider) Resolve(ctx context.Context, imdbID, embedType strin
                         lastErr = err
                         continue
                 }
-                // Success — copy video URLs.
+                // Verify the extracted video URL is accessible before returning.
+                verified := make([]provider.VideoURL, 0, len(ext.Videos))
                 for _, v := range ext.Videos {
-                        result.Videos = append(result.Videos, provider.VideoURL{
-                                URL:     v.URL,
-                                Quality: v.Quality,
-                        })
+                        if p.verifyURL(ctx, v.URL) {
+                                verified = append(verified, provider.VideoURL{
+                                        URL:     v.URL,
+                                        Quality: v.Quality,
+                                })
+                        }
                 }
+                if len(verified) == 0 {
+                        lastErr = fmt.Errorf("supercine: extracted video URL for server %d is not accessible", i)
+                        continue
+                }
+                // Success — copy verified video URLs.
+                result.Videos = verified
                 // Tag the server that worked.
                 result.Servers[i].Description = fmt.Sprintf("[OK] %s", result.Servers[i].Description)
                 return result, nil
@@ -541,12 +570,20 @@ func (p *SupercineProvider) ResolveEpisode(ctx context.Context, imdbID string, s
                         lastErr = err
                         continue
                 }
+                verified := make([]provider.VideoURL, 0, len(ext.Videos))
                 for _, v := range ext.Videos {
-                        result.Videos = append(result.Videos, provider.VideoURL{
-                                URL:     v.URL,
-                                Quality: v.Quality,
-                        })
+                        if p.verifyURL(ctx, v.URL) {
+                                verified = append(verified, provider.VideoURL{
+                                        URL:     v.URL,
+                                        Quality: v.Quality,
+                                })
+                        }
                 }
+                if len(verified) == 0 {
+                        lastErr = fmt.Errorf("supercine: extracted video URL for player %d is not accessible", i)
+                        continue
+                }
+                result.Videos = verified
                 result.Servers[i].Description = fmt.Sprintf("[OK] %s", result.Servers[i].Description)
                 return result, nil
         }
