@@ -1,0 +1,44 @@
+# Binaries
+supercine-proxy
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+dist/
+bin/
+build/
+
+# Logs
+*.log
+
+# Environment files (may contain tokens)
+.env
+.env.local
+.envrc
+
+# OS
+Thumbs.db

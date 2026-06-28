@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supercine Proxy — Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='20'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎬</span>
+      <div>
+        <h1>Supercine Proxy</h1>
+        <p class="tagline">Go proxy · interface web · extractors</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Visão Geral</button>
+      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="api">API Explorer</button>
+      <button class="tab" data-tab="extract">Extractor</button>
+      <button class="tab" data-tab="docs">Documentação</button>
+    </nav>
+    <div class="status">
+      <span class="dot" id="healthDot">●</span>
+      <span id="healthText">conectando…</span>
+    </div>
+  </header>
+
+  <main class="content">
+    <!-- ============= OVERVIEW ============= -->
+    <section id="tab-overview" class="tab-panel active">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total de requests</div>
+          <div class="stat-value" id="statTotal">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cache hits</div>
+          <div class="stat-value good" id="statHits">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cache misses</div>
+          <div class="stat-value" id="statMisses">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Erros</div>
+          <div class="stat-value bad" id="statErrors">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Bytes proxyados</div>
+          <div class="stat-value" id="statBytes">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Chamadas extractor</div>
+          <div class="stat-value" id="statExt">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Por status HTTP</h2>
+        <div id="statusBreakdown" class="bar-chart"></div>
+      </div>
+
+      <div class="card">
+        <h2>Top paths</h2>
+        <div id="topPaths" class="path-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Mensagens engraçadas da API 🤣</h2>
+        <ul class="funny-list">
+          <li><code>"URL recebida no nativo 🛑"</code> — log nativo quando Flutter envia URL para o Kotlin</li>
+          <li><code>"emulator 💙"</code> — app trava em emulador (sim, com emoji azul)</li>
+          <li><code>"URL rNao encontrada 🛑"</code> — typo em "não" dentro do loop de regex</li>
+          <li><code>"Preencha os dados necessários"</code> — resposta do <code>/api/add</code> sem params</li>
+          <li><code>"site não suportado"</code> — <code>/site/extractor?url=...</code> com hoster desconhecido</li>
+          <li><code>"falta dados"</code> — <code>/site/extractor</code> sem url</li>
+          <li><code>"Ação desconhecida"</code> — <code>/inbox/report</code> sem action válida</li>
+          <li><code>"Código e device são obrigatórios"</code> — <code>/auth/login</code> sem code+device</li>
+          <li><code>"Código inválido"</code> — código de ativação inválido no login</li>
+          <li><code>"Pedido não encontrado"</code> — <code>/auth/checkout-status</code> com pix_id inválido</li>
+          <li><code>"Device é obrigatório"</code> — faltou device no logout/history</li>
+          <li><code>"Velocidade ok e poucos anúncios"</code> — descrição do 1º server no embed</li>
+          <li><code>"Esee é o Top 1, rápido e poucos anúncios!"</code> — typo "Esee" (seria "Esse") no embed kkk</li>
+          <li><code>"O 2º melhor muito rápido!"</code> — descrição do 4º server no embed</li>
+          <li><code>"possivel fazer pedidos em tempo real com o suporte !!"</code> — texto em PT no libapp.so</li>
+          <li><code>"Erro ao abrir player nativo: "</code> — quando o player nativo falha</li>
+          <li><code>"um aplicativo para ajudar amantes de streaming de v[ídeos]"</code> — descrição do app</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============= LOGS ============= -->
+    <section id="tab-logs" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <h2>Logs recentes</h2>
+          <div class="card-actions">
+            <label>
+              Limite:
+              <select id="logLimit">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="logAutorefresh" checked />
+              auto-refresh (3s)
+            </label>
+            <button id="btnClearLogs" class="btn btn-danger">Limpar</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="log-table">
+            <thead>
+              <tr>
+                <th>Horário</th>
+                <th>Método</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Duração</th>
+                <th>Bytes</th>
+                <th>Cache</th>
+                <th>Erro</th>
+              </tr>
+            </thead>
+            <tbody id="logBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= API EXPLORER ============= -->
+    <section id="tab-api" class="tab-panel">
+      <div class="card">
+        <h2>API Explorer</h2>
+        <p class="hint">Dispare chamadas contra o proxy e veja a resposta do upstream.</p>
+        <div class="explorer">
+          <div class="explorer-form">
+            <input type="text" id="apiPath" placeholder="/v1/api/filmes" value="/v1/api/filmes" />
+            <select id="apiMethod">
+              <option>GET</option>
+              <option>POST</option>
+            </select>
+            <button id="btnApiSend" class="btn">Enviar</button>
+          </div>
+          <div class="explorer-result">
+            <div class="result-meta" id="apiMeta"></div>
+            <pre id="apiResult" class="result-pre">—</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Rotas do upstream (descoberta automática)</h2>
+        <p class="hint">Lista de todas as rotas WordPress REST retornadas por <code>/wp-json/</code>.</p>
+        <button id="btnLoadRoutes" class="btn">Carregar rotas</button>
+        <div id="routesList" class="routes-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Planos de assinatura</h2>
+        <p class="hint">Retornado por <code>POST /v1/auth/plans</code>.</p>
+        <button id="btnLoadPlans" class="btn">Carregar planos</button>
+        <div id="plansList" class="plans-list"></div>
+      </div>
+    </section>
+
+    <!-- ============= EXTRACTOR ============= -->
+    <section id="tab-extract" class="tab-panel">
+      <div class="card">
+        <h2>Extractor de vídeo</h2>
+        <p class="hint">Forneça um IMDB ID para resolver o(s) link(s) direto(s) de mp4/m3u8.</p>
+        <div class="explorer-form">
+          <input type="text" id="exImdb" placeholder="tt2250912" value="tt2250912" />
+          <select id="exType">
+            <option value="movies">movies (filme)</option>
+            <option value="tvshows">tvshows (série/anime)</option>
+          </select>
+          <input type="number" id="exServer" placeholder="server idx (opcional)" min="0" />
+          <button id="btnExtract" class="btn">Extrair</button>
+        </div>
+        <div class="explorer-result">
+          <div class="result-meta" id="extractMeta"></div>
+          <pre id="extractResult" class="result-pre">—</pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Extractors disponíveis</h2>
+        <p class="hint">Lista de hosters suportados (porta dos extractores Java do APK).</p>
+        <div id="extractorsList" class="extractors-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Extrair URL de hoster diretamente</h2>
+        <p class="hint">Se já tem um link de hoster (mixdrop.ps/e/xxx, doodstream.com/e/xxx, etc), cole aqui.</p>
+        <div class="explorer-form">
+          <input type="text" id="hostUrl" placeholder="https://mixdrop.ps/e/abc123" style="flex:1" />
+          <button id="btnHostExtract" class="btn">Extrair</button>
+        </div>
+        <pre id="hostResult" class="result-pre">—</pre>
+      </div>
+    </section>
+
+    <!-- ============= DOCS ============= -->
+    <section id="tab-docs" class="tab-panel">
+      <div class="card docs">
+        <h2>Como usar</h2>
+        <h3>1) Subir o proxy</h3>
+        <pre>go run ./cmd/server
+# ou
+go build -o supercine-proxy ./cmd/server && ./supercine-proxy</pre>
+        <p>Acesse <code>http://localhost:8080</code> para este dashboard. A API está em <code>http://localhost:8080/v1/</code>.</p>
+
+        <h3>2) Endpoints do proxy</h3>
+        <table class="api-table">
+          <thead><tr><th>Método</th><th>Rota</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/health</code></td><td>Health-check do proxy.</td></tr>
+            <tr><td>GET</td><td><code>/v1/stats</code></td><td>Estatísticas agregadas.</td></tr>
+            <tr><td>GET</td><td><code>/v1/logs?limit=100</code></td><td>Últimas N entradas de log.</td></tr>
+            <tr><td>POST</td><td><code>/v1/logs/clear</code></td><td>Limpa logs e stats.</td></tr>
+            <tr><td>GET</td><td><code>/v1/api/&lt;type&gt;</code></td><td>Proxy direto para <code>/wp-json/api/&lt;type&gt;</code>.</td></tr>
+            <tr><td>GET</td><td><code>/v1/auth/plans</code></td><td>Wrapper dos planos de assinatura.</td></tr>
+            <tr><td>GET</td><td><code>/v1/embed?imdb=...&amp;type=...</code></td><td>Lista os <code>&lt;server-selector&gt;</code> da página embed.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extract?imdb=...&amp;type=...&amp;server=0</code></td><td>Resolve um IMDB para URL direta mp4/m3u8.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extractors</code></td><td>Lista hosters suportados.</td></tr>
+            <tr><td>GET</td><td><code>/v1/routes</code></td><td>Descoberta automática das rotas upstream.</td></tr>
+          </tbody>
+        </table>
+
+        <h3>3) Curl de exemplo</h3>
+        <pre>curl 'http://localhost:8080/v1/extract?imdb=tt2250912&type=movies'</pre>
+
+        <h3>4) Variáveis de ambiente</h3>
+        <ul>
+          <li><code>LISTEN_ADDR</code> — endereço de bind (default <code>:8080</code>)</li>
+          <li><code>UPSTREAM_BASE</code> — base do upstream (default <code>https://supercine-tv.net/wp-json</code>)</li>
+          <li><code>EMBED_BASE</code> — base do embed (default <code>https://supercine-tv.net/embed-api/</code>)</li>
+          <li><code>CACHE_TTL</code> — TTL do cache (default <code>5m</code>)</li>
+          <li><code>CACHE_MAX_ENTRIES</code> — máximo de entradas no cache (default <code>1000</code>)</li>
+          <li><code>LOG_MAX_ENTRIES</code> — máximo de logs em memória (default <code>500</code>)</li>
+          <li><code>REQUEST_TIMEOUT</code> — timeout HTTP (default <code>20s</code>)</li>
+          <li><code>ADMIN_TOKEN</code> — token para endpoints mutantes (default vazio)</li>
+          <li><code>VERBOSE</code> — log detalhado (default <code>false</code>)</li>
+        </ul>
+
+        <h3>5) Documentação completa</h3>
+        <p>Veja a pasta <code>docs/</code> do repositório para a especificação completa da API do APK e do proxy.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Supercine Proxy v1.0.0 · feito com Go · <a href="https://github.com/deivid22srk/supercine-proxy" target="_blank">GitHub</a></span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
