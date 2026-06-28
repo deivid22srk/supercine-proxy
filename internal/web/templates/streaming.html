@@ -107,6 +107,20 @@
           </button>
         </div>
         <p class="modal-cast" id="modalCast"></p>
+
+        <!-- Seasons/Episodes section (only shown for TV shows) -->
+        <div class="seasons-section" id="seasonsSection" hidden>
+          <div class="seasons-header">
+            <h3 class="seasons-title">Episódios</h3>
+            <div class="season-selector">
+              <label>Temporada:</label>
+              <select id="seasonSelect"></select>
+            </div>
+          </div>
+          <div class="episodes-list" id="episodesList">
+            <div class="loading-state"><div class="spinner"></div><p>Carregando episódios…</p></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

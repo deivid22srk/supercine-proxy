@@ -60,6 +60,7 @@ func main() {
         providerReg := provider.NewRegistry()
         sp := supercine.New(supercine.ProviderConfig{
                 EmbedBase:   cfg.EmbedBase,
+                APIBase:     cfg.UpstreamBase + "/api",
                 UserAgent:   cfg.UserAgent,
                 HTTPTimeout: cfg.RequestTimeout,
         }, registry)

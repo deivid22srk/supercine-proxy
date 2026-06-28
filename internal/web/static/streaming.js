@@ -20,6 +20,8 @@ const state = {
   heroItem: null,
   searchResults: [],
   currentDetail: null,
+  currentSeasons: null,        // cached seasons response for currentDetail
+  currentSelectedSeason: 1,    // currently selected season number
   currentResolve: null,
   currentServerIdx: 0,
   hls: null,
@@ -261,10 +263,30 @@ function setupModals() {
   $('#modalPlayBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     if (!state.currentDetail) return;
-    const item = state.currentDetail;
-    closeDetail();
-    // Small delay so the close animation finishes before the player opens.
-    setTimeout(() => openPlayer(item), 50);
+    if (state.currentDetail.type === 'tv') {
+      // For TV, find the first available episode and play it
+      const firstEp = state.currentSeasons?.seasons?.[0]?.episodes?.[0];
+      if (firstEp) {
+        const season = state.currentSeasons.seasons[0].number;
+        closeDetail();
+        setTimeout(() => openPlayerForEpisode(state.currentDetail, season, firstEp.number), 50);
+      } else {
+        // No seasons loaded yet, just open the movie-style player (will fail gracefully)
+        const item = state.currentDetail;
+        closeDetail();
+        setTimeout(() => openPlayer(item), 50);
+      }
+    } else {
+      const item = state.currentDetail;
+      closeDetail();
+      setTimeout(() => openPlayer(item), 50);
+    }
+  });
+
+  // Season selector change handler
+  $('#seasonSelect').addEventListener('change', (e) => {
+    state.currentSelectedSeason = parseInt(e.target.value);
+    renderEpisodes();
   });
 
   // Player modal
@@ -288,6 +310,7 @@ function setupModals() {
 
 function openDetail(item) {
   state.currentDetail = item;
+  state.currentSeasons = null;
   $('#modalTitle').textContent = item.title_ptbr || item.title_orig || item.imdb;
   $('#modalMeta').textContent = [
     item.year && item.year > 0 ? item.year : null,
@@ -301,19 +324,101 @@ function openDetail(item) {
   } else {
     $('#modalBackdropImg').style.backgroundImage = '';
   }
+
+  // Show/hide seasons section
+  if (item.type === 'tv' && item.available) {
+    $('#seasonsSection').hidden = false;
+    $('#modalPlayBtnLabel').textContent = 'Assistir 1º episódio';
+    loadSeasons(item.imdb);
+  } else {
+    $('#seasonsSection').hidden = true;
+    $('#modalPlayBtnLabel').textContent = item.available ? 'Assistir agora' : 'Indisponível';
+  }
+
   // Disable Play button if unavailable
   $('#modalPlayBtn').disabled = !item.available;
   $('#modalPlayBtn').style.opacity = item.available ? '1' : '0.5';
-  $('#modalPlayBtn').textContent = item.available ? '▶ Assistir agora' : 'Indisponível';
 
   $('#detailModal').hidden = false;
   document.body.style.overflow = 'hidden';
+}
+
+// ============ SEASONS & EPISODES ============
+async function loadSeasons(imdbID) {
+  state.currentSeasons = null;
+  $('#seasonSelect').innerHTML = '<option>Carregando…</option>';
+  $('#episodesList').innerHTML = '<div class="loading-state"><div class="spinner"></div><p>Carregando episódios…</p></div>';
+  try {
+    const r = await fetch(`${API}/seasons?imdb=${encodeURIComponent(imdbID)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    state.currentSeasons = j;
+    if (!j.seasons || j.seasons.length === 0) {
+      $('#seasonSelect').innerHTML = '';
+      $('#episodesList').innerHTML = '<div class="empty-state">Nenhuma temporada disponível.</div>';
+      return;
+    }
+    // Populate season dropdown
+    $('#seasonSelect').innerHTML = j.seasons.map(s =>
+      `<option value="${s.number}">Temporada ${s.number}</option>`
+    ).join('');
+    state.currentSelectedSeason = j.seasons[0].number;
+    $('#seasonSelect').value = state.currentSelectedSeason;
+    renderEpisodes();
+  } catch (e) {
+    $('#seasonSelect').innerHTML = '';
+    $('#episodesList').innerHTML = `<div class="empty-state">Erro ao carregar temporadas: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderEpisodes() {
+  if (!state.currentSeasons || !state.currentSeasons.seasons) return;
+  const season = state.currentSeasons.seasons.find(s => s.number === state.currentSelectedSeason);
+  if (!season) {
+    $('#episodesList').innerHTML = '<div class="empty-state">Temporada não encontrada.</div>';
+    return;
+  }
+  const list = $('#episodesList');
+  list.innerHTML = '';
+  if (!season.episodes || season.episodes.length === 0) {
+    list.innerHTML = '<div class="empty-state">Nenhum episódio nesta temporada.</div>';
+    return;
+  }
+  for (const ep of season.episodes) {
+    const card = document.createElement('div');
+    card.className = 'episode-card';
+    card.innerHTML = `
+      <div class="episode-thumb" style="background-image: url('${ep.backdrop || ''}');">
+        <div class="episode-num">E${ep.number}</div>
+      </div>
+      <div class="episode-info">
+        <div class="episode-title">${ep.number}. ${escapeHtml(ep.title || `Episódio ${ep.number}`)}</div>
+        ${ep.date ? `<div class="episode-date">${escapeHtml(ep.date)}</div>` : ''}
+        <button class="episode-play-btn">▶ Assistir</button>
+      </div>
+    `;
+    card.querySelector('.episode-play-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = state.currentDetail;
+      closeDetail();
+      setTimeout(() => openPlayerForEpisode(item, season.number, ep.number), 50);
+    });
+    // Also allow click anywhere on the card to play
+    card.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = state.currentDetail;
+      closeDetail();
+      setTimeout(() => openPlayerForEpisode(item, season.number, ep.number), 50);
+    });
+    list.appendChild(card);
+  }
 }
 
 function closeDetail() {
   $('#detailModal').hidden = true;
   document.body.style.overflow = '';
   state.currentDetail = null;
+  state.currentSeasons = null;
 }
 
 // ============ PLAYER ============
@@ -348,13 +453,53 @@ async function openPlayer(item) {
     }
     renderServerList(j.servers);
     state.currentServerIdx = 0;
-    // If the provider already returned videos (it tries 3 servers internally),
-    // play the first one immediately.
     if (j.videos && j.videos.length > 0) {
       playVideo(j.videos[0].url, j.videos[0].quality);
     } else {
-      // Otherwise, no provider could resolve — show error.
       throw new Error('Nenhum dos provedores conseguiu extrair um link direto.');
+    }
+  } catch (e) {
+    showPlayerError(e.message);
+  }
+}
+
+// openPlayerForEpisode opens the player for a specific TV episode.
+// Calls /v1/resolveEpisode instead of /v1/resolve.
+async function openPlayerForEpisode(item, season, episode) {
+  state.currentDetail = item;
+  $('#playerTitle').textContent = `${item.title_ptbr || item.title_orig || item.imdb} — S${season}E${episode}`;
+  $('#playerMeta').textContent = [
+    item.year && item.year > 0 ? item.year : null,
+    'Série',
+    `Temporada ${season} · Episódio ${episode}`,
+    `via ${item.provider || 'supercine'}`,
+  ].filter(Boolean).join(' · ');
+
+  $('#playerError').hidden = true;
+  $('#playerLoading').hidden = false;
+  $('#videoPlayer').hidden = true;
+  $('#serverButtons').innerHTML = '';
+  $('#playerModal').hidden = false;
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const url = `${API}/resolveEpisode?imdb=${encodeURIComponent(item.imdb)}&season=${season}&episode=${episode}`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      const errBody = await r.json().catch(() => ({}));
+      throw new Error(errBody.error || `HTTP ${r.status}`);
+    }
+    const j = await r.json();
+    state.currentResolve = j;
+    if (!j.servers || j.servers.length === 0) {
+      throw new Error('Nenhum servidor disponível para este episódio.');
+    }
+    renderServerList(j.servers);
+    state.currentServerIdx = 0;
+    if (j.videos && j.videos.length > 0) {
+      playVideo(j.videos[0].url, j.videos[0].quality);
+    } else {
+      throw new Error('Nenhum dos provedores conseguiu extrair um link direto para este episódio.');
     }
   } catch (e) {
     showPlayerError(e.message);
