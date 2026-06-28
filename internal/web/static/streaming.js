@@ -596,11 +596,23 @@ function playVideo(videoURL, quality) {
   $('#playerLoading').hidden = true;
   $('#videoPlayer').hidden = false;
 
+  // Route the video through our /v1/stream proxy. The hoster CDNs
+  // (MixDrop, StreamWish, VidHide, etc.) reject browser requests that
+  // don't carry the hoster's own Origin/Referer, so the browser can't
+  // fetch the CDN URL directly. The /v1/stream endpoint fetches the
+  // video server-side with the correct headers and streams it back to
+  // the browser with permissive CORS.
+  //
+  // For HLS (m3u8), the proxy also rewrites segment URLs in the
+  // playlist to route through /v1/stream, so hls.js fetches segments
+  // from the proxy instead of the CDN.
+  const proxiedURL = `${API}/stream?url=${encodeURIComponent(videoURL)}`;
+
   if (videoURL.includes('.m3u8')) {
     // Use hls.js for HLS streams
     if (window.Hls && Hls.isSupported()) {
       state.hls = new Hls({ enableWorker: true, lowLatencyMode: false });
-      state.hls.loadSource(videoURL);
+      state.hls.loadSource(proxiedURL);
       state.hls.attachMedia(video);
       state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       state.hls.on(Hls.Events.ERROR, (e, data) => {
@@ -610,15 +622,16 @@ function playVideo(videoURL, quality) {
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Native HLS (Safari)
-      video.src = videoURL;
+      video.src = proxiedURL;
       video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
     } else {
       showPlayerError('Navegador não suporta HLS.');
       return;
     }
   } else {
-    // Direct mp4/mkv
-    video.src = videoURL;
+    // Direct mp4/mkv — but still through the proxy so the CDN's
+    // Origin check doesn't block the browser.
+    video.src = proxiedURL;
     video.play().catch(() => {});
   }
 

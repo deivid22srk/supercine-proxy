@@ -66,6 +66,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
         mux.HandleFunc("/v1/resolve", h.handleResolveVideo)
         mux.HandleFunc("/v1/seasons", h.handleSeasons)
         mux.HandleFunc("/v1/resolveEpisode", h.handleResolveEpisode)
+        // /v1/stream proxies video streams through this server so the browser
+        // can play CDN URLs that would otherwise be blocked by CORS/Origin
+        // checks. See internal/streaming/stream.go for details.
+        mux.HandleFunc("/v1/stream", h.handleStream)
 }
 
 // handlePopular returns the curated list of popular IMDB IDs, enriched.
