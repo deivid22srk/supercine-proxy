@@ -165,13 +165,18 @@ jobs:
 
       - name: Commit go.mod/go.sum atualizados (se mudaram)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        continue-on-error: true
         run: |
           if ! git diff --quiet go.mod go.sum; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add go.mod go.sum
             git commit -m "chore(deps): go mod tidy after adding golang.org/x/mobile [skip ci]"
-            git push
+            # Tenta rebasear caso outro commit tenha chegado no main entre
+            # o checkout e este push. Se ainda assim falhar, o step falha mas
+            # não derruba o job (continue-on-error: true).
+            git pull --rebase origin main || true
+            git push origin main || echo "⚠️ push rejeitado (provavelmente non-fast-forward). go.mod/go.sum serão atualizados no próximo dispatch."
           else
             echo "go.mod/go.sum já estavam atualizados, nada a commitar."
           fi
