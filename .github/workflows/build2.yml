@@ -1,0 +1,182 @@
+name: Build Android APK (Go Mobile)
+
+# Este workflow compila o app Android "Supercine Proxy Mobile" a partir
+# do pacote `mobile/` usando gomobile. O app sobe o servidor HTTP do
+# supercine-proxy em 127.0.0.1:8080 dentro do dispositivo e o usuário
+# acessa a UI de streaming pelo navegador em http://localhost:8080/.
+#
+# Pode ser disparado manualmente (workflow_dispatch) ou a cada push em main.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Arquitetura alvo (android/arm64, android/amd64, ou 'all')"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - android/arm64
+          - android/amd64
+          - android/386
+          - all
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/build2.yml'
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build Supercine Proxy APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      GO_VERSION: "1.25"
+      ANDROID_API_LEVEL: "34"
+      ANDROID_BUILD_TOOLS: "34.0.0"
+      NDK_VERSION: "26.3.11579264"
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Configurar JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-${{ env.ANDROID_API_LEVEL }} build-tools;${{ env.ANDROID_BUILD_TOOLS }} ndk;${{ env.NDK_VERSION }}'
+
+      - name: Exibir versões instaladas
+        run: |
+          echo "=== Go ==="
+          go version
+          echo "=== Java ==="
+          java -version
+          echo "=== Android SDK ==="
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls -la "$ANDROID_HOME/ndk/" || true
+
+      - name: Instalar gomobile e gobind
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Inicializar gomobile
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init -v
+
+      - name: Resolver dependências Go (go mod tidy)
+        run: |
+          go mod tidy -v
+          go mod download
+          echo "=== go.mod ==="
+          cat go.mod
+          echo "=== go.sum (resumido) ==="
+          wc -l go.sum
+
+      - name: Verificar compilação do servidor desktop (sanity check)
+        run: |
+          # Compila apenas o pacote, sem linkar (mais rápido e detecta erros
+          # de sintaxe/import antes de tentar o gomobile build).
+          go build ./internal/...
+          go vet ./mobile/...
+
+      - name: Definir target de build
+        id: target
+        run: |
+          INPUT="${{ github.event.inputs.target }}"
+          if [ -z "$INPUT" ] || [ "$INPUT" = "all" ]; then
+            echo "target=android/arm64,android/amd64,android/386" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=$INPUT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compilar APK com gomobile
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          # Garante que o NDK alvo existe; se não, usa o primeiro disponível
+          if [ ! -d "$ANDROID_NDK_HOME" ]; then
+            export ANDROID_NDK_HOME=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1)
+            echo "NDK alvo não encontrado, usando: $ANDROID_NDK_HOME"
+          fi
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls -la "$ANDROID_NDK_HOME"
+          cd mobile
+          gomobile build -v \
+            -target="${{ steps.target.outputs.target }}" \
+            -androidapi=${{ env.ANDROID_API_LEVEL }} \
+            -o "../supercine-proxy-mobile.apk" \
+            .
+          cd ..
+          echo "=== APK gerado ==="
+          ls -lh supercine-proxy-mobile.apk
+          file supercine-proxy-mobile.apk
+
+      - name: Verificar integridade do APK
+        run: |
+          if [ -f supercine-proxy-mobile.apk ]; then
+            echo "✅ APK compilado com sucesso"
+            unzip -l supercine-proxy-mobile.apk | head -30
+          else
+            echo "❌ APK não foi gerado"
+            exit 1
+          fi
+
+      - name: Upload do APK como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supercine-proxy-mobile-apk
+          path: supercine-proxy-mobile.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Commit go.mod/go.sum atualizados (se mudaram)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          if ! git diff --quiet go.mod go.sum; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add go.mod go.sum
+            git commit -m "chore(deps): go mod tidy after adding golang.org/x/mobile [skip ci]"
+            git push
+          else
+            echo "go.mod/go.sum já estavam atualizados, nada a commitar."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resumo do build
+        if: always()
+        run: |
+          echo "## Resultado do Build — Supercine Proxy Mobile" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ **Status:** Sucesso" >> "$GITHUB_STEP_SUMMARY"
+            echo "📦 **APK:** supercine-proxy-mobile.apk" >> "$GITHUB_STEP_SUMMARY"
+            echo "🎯 **Target:** \`${{ steps.target.outputs.target }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "🌐 **URL local no device:** \`http://localhost:8080/\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **Status:** Falha — verifique os logs acima." >> "$GITHUB_STEP_SUMMARY"
+          fi
