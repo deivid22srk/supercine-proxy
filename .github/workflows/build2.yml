@@ -35,6 +35,8 @@ jobs:
     name: Build Supercine Proxy APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write   # necessario para o step "Commit go.mod/go.sum"
 
     env:
       GO_VERSION: "1.25"
